@@ -1,0 +1,46 @@
+# ============================================================================
+#  群晖 mihomo（Clash.Meta）+ 中文网页管理台 —— 单端口 / 旁路由版
+#  ---------------------------------------------------------------------------
+#  Container Manager 用法：项目 → 新增 → 粘贴下面全部内容 → 一个字都不用改
+#
+#  · 对外只需要一个端口 9090：
+#        http://群晖IP:9090/        → 网页管理台（改密码、加机场、加节点、更新配置）
+#        http://群晖IP:9090/ui/     → 节点面板 metacubexd（管理台里点「节点面板（内嵌）」）
+#        http://群晖IP:9090/clash/  → 内核接口反代（面板自动用它，不需要你关心）
+#  · 内核控制接口收在内网 127.0.0.1:9091，不对外；代理端口 7890（App 里要手填代理时才用）
+#  · 旁路由：host 网络 + NET_ADMIN + /dev/net/tun。设备把「网关」指向群晖 IP 就全局走代理
+# ============================================================================
+services:
+  mihomo:
+    image: metacubex/mihomo:latest
+    container_name: ${CT_MH:-mihomo}
+    restart: unless-stopped
+    network_mode: host                      # 旁路由必需：TUN 要在宿主网络里接管转发流量
+    cap_add:
+      - NET_ADMIN                           # 建 TUN / 改路由表需要
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./etc:/root/.config/mihomo          # 相对路径，跟着项目文件夹走
+    command: ["-d", "/root/.config/mihomo"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mihomo-admin:
+    image: ghcr.io/amw1933/synology-mihomo-web:latest
+    container_name: ${CT_ADMIN:-mihomo-admin}
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./:/data                            # 整个项目文件夹 = 管理台的数据目录
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - ADMIN_PASS=${ADMIN_PASS:-admin}     # 默认 admin，登录后请立刻改掉
+      - ADMIN_PORT=${ADMIN_PORT:-9090}      # 唯一对外的端口：管理台 + /ui/ 面板 + /clash/ 反代
+      - ADMIN_BIND=${ADMIN_BIND:-0.0.0.0}
+      - PROXY_PORT=${PROXY_PORT:-7890}      # 代理端口（host 网络下 = 配置里的 mixed-port）
+      - PANEL_PORT=${PANEL_PORT:-9091}      # 内核控制接口，只绑本机，不对外
+      - TUN_ENABLE=${TUN_ENABLE:-1}         # 1 = 旁路由（TUN）；0 = 只开代理端口

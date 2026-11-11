@@ -1,0 +1,60 @@
+# ============================================================
+#  群晖 mihomo + 网页管理台   （compose 模板 · 旁路由 / TUN 版）
+#
+#  这个文件是给「一键安装脚本」用的模板，里面的 __XX__ 会被脚本替换。
+#  如果你是手动 / Container Manager 部署，请用 docker-compose.yml。
+#
+#  旁路由要点：内核走 host 网络 + NET_ADMIN + /dev/net/tun：
+#    · TUN 打开后，本机流量和「网关指向本机」的转发流量都会被接管
+#    · 设备只要把网关填成本机 IP 就全局走代理（不用填端口）
+#    · 端口由配置决定：默认 7890 代理 / 9090 面板 / 9093 管理台
+# ============================================================
+
+services:
+  mihomo:
+    # 内核镜像：用上游在 Docker Hub 的官方发布（国内可直接拉）
+    # ⛔ 不要用 ghcr.io/metacubex/mihomo —— 那个包拒绝匿名拉取，会报 denied
+    image: metacubex/mihomo:latest
+    container_name: __CT_MH__
+    restart: unless-stopped
+
+    network_mode: host             # 旁路由必需：TUN 要在宿主网络里接管转发流量
+    cap_add:
+      - NET_ADMIN                  # 建 TUN / 改路由需要
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+    volumes:
+      - __BASE__/etc:/root/.config/mihomo
+
+    command: ["-d", "/root/.config/mihomo"]
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mihomo-admin:
+    build: ./admin
+    image: mihomo-admin:1.0
+    container_name: __CT_ADMIN__
+    restart: unless-stopped
+    network_mode: host
+
+    volumes:
+      - __BASE__:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    environment:
+      - ADMIN_PASS=__PASS__
+      - SB_BASE=/data
+      - HOST_BASE=__BASE__
+      - ADMIN_PORT=__ADMIN_PORT__
+      # 绑 0.0.0.0 + 让管理台自己识别宿主地址：改 IP / 换机器都不用动配置
+      - ADMIN_BIND=0.0.0.0
+      # host 网络下端口由 etc/config.yaml 决定（默认 7890 / 9090）
+      - PROXY_PORT=__PROXY_PORT__
+      - PANEL_PORT=__PANEL_PORT__
+      # 1 = 生成带 TUN 的旁路由配置；0 = 只提供代理端口
+      - TUN_ENABLE=__TUN_ENABLE__

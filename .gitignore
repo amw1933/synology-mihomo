@@ -1,0 +1,13 @@
+# 运行时产物（部署到 NAS 后生成，不要提交）
+tmp/
+*.log
+settings.json
+sub.url
+image.name
+backup/
+etc/
+providers/
+rules/
+*.pyc
+__pycache__/
+.dsh-acl-recovery/

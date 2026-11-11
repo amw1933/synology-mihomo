@@ -1,0 +1,35 @@
+name: build-admin-image
+
+# 把管理台打包成镜像发到 GHCR，这样 Container Manager 部署时不用再手工传 app.py / Dockerfile
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'admin/**'
+      - '.github/workflows/admin-image.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: ./admin
+          push: true
+          tags: |
+            ghcr.io/amw1933/synology-mihomo-web:latest
+            ghcr.io/amw1933/synology-mihomo-web:${{ github.sha }}
