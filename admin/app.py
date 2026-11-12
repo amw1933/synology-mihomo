@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.8.6"
+APP_VERSION = "2.8.7"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1929,9 +1929,9 @@ def split_test(force=False, with_lat=False):
         try:
             rq = urllib.request.Request("https://%s/" % host,
                                         headers={"User-Agent": NET_UA, "Accept": "*/*"})
-            with urllib.request.urlopen(rq, timeout=9.0) as r:
+            with urllib.request.urlopen(rq, timeout=6.0) as r:
                 r.read(512)
-                time.sleep(1.2)
+                time.sleep(1.0)
         except Exception:
             pass
 
@@ -1939,13 +1939,13 @@ def split_test(force=False, with_lat=False):
         threading.Thread(target=fire, args=(host,), daemon=True).start()
 
     found = {}
-    t_end = time.time() + 9
+    t_end = time.time() + 6
     while time.time() < t_end and len(found) < len(SPLIT_TARGETS):
         try:
             code, body = ctrl_get(s, "/connections")
             if code == 200:
-                d = json.loads(body)
-                for c in (d.get("connections") or []):
+                payload = json.loads(body)      # 注意：不能叫 d，d 是我们的结果字典
+                for c in (payload.get("connections") or []):
                     h = _conn_host(c)
                     if not h:
                         continue
@@ -3149,7 +3149,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.8.6</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.8.7</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
