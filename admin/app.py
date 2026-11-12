@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.9.4"
+APP_VERSION = "2.9.5"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -3430,7 +3430,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
   <div class=hmid>
    <span class=mk><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.2v5.9c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6.2z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.6"/></svg></span>
    <h1>mihomo 网页管理台<small>群晖 NAS · 单端口旁路由</small></h1>
-   <span class="pill" id=ver>v2.9.4</span>
+   <span class="pill" id=ver>v2.9.5</span>
    <span class="pill gray2" id=hd>群晖 NAS</span>
    <button id=mhuiBtn class=nodes onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()">节点面板（内嵌）</button>
   </div>
@@ -5999,12 +5999,16 @@ function loadNodes(){
   fetch('/api/status').then(r=>r.json()).then(function(d){ $('#nd_h').textContent='当前手动节点：'+d.manual_count+' 个'; });
   fetch('/api/proxies').then(r=>r.json()).then(function(d){
     var ps=(d.data&&d.data.proxies)||{};var h='';var n=0;
+    // 只列「真正的手动节点」：策略组、内核内置代理（PASS/REJECT/COMPATIBLE/GLOBAL…）一律不列，
+    // 否则它们会被误当成节点显示出来，还带一个删不掉的删除按钮
+    var SKIP={Direct:1,Dns:1,Selector:1,URLTest:1,Fallback:1,LoadBalance:1,Relay:1,
+              Pass:1,PassRule:1,Reject:1,RejectDrop:1,Compatible:1};
     Object.keys(ps).forEach(function(k){var v=ps[k];
-      if(v.type==='Direct'||v.type==='Dns') return;
+      if(SKIP[v.type]) return;
       if(v.provider!==undefined) return; // 机场节点不在这里列
       n++;h+='<tr><td>'+esc(k)+'</td><td>'+esc(v.type)+'</td><td>'+esc(v.server||'-')+'</td><td>'+esc(v.port||'-')+
         '</td><td><button class="btn red" onclick="ndDel(`'+esc(k)+'`)">删除</button></td></tr>'});
-    $('#ndt').innerHTML=h||'<tr><td colspan=5>没有手动节点（机场节点请在「节点面板」里看）</td></tr>';
+    $('#ndt').innerHTML=h||'<tr><td colspan=5>没有手动节点 —— 想加就在这里粘贴分享链接；机场节点请到页头的「节点面板」看，策略组请到「策略」页改</td></tr>';
   });
 }
 function ndAdd(){var t=$('#nd_t').value;if(!t.trim()){upFail('请粘贴分享链接');return}apiPost('/api/nodes',{action:'add',text:t},0)}
