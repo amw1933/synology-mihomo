@@ -2528,14 +2528,7 @@ function loadBackups(){
   });
 }
 function rsGo(n){ if(!confirm('回滚到 '+n+' ？')) return; apiPost('/api/restore',{name:n},0); }
-function selfUpd(){
-  if(!confirm('从仓库拉取最新管理台程序（admin/app.py）？会先做语法校验 + 备份当前版本，成功后自动重启面板（约 8 秒）。')){
-    apiPost('/api/self-update',{apply:false},1); return;
-  }
-  apiPost('/api/self-update',{apply:true},1).then(function(d){
-    if(d && d.ok && !/已经是最新/.test(d.msg||'')){ setTimeout(function(){location.reload()},9000); }
-  });
-}
+function selfUpd(){ doUpdate(); }
 function auToggle(){
   apiPost('/api/auto-update',{enabled:$('#t_au').checked},0);
 }
@@ -2554,16 +2547,30 @@ function chkUpd(){
   fetch('/api/update-check',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
    .then(function(r){ return r.json(); })
    .then(function(d){
-     if(!tip){ return; }
      if(d && d.available){
-       tip.innerHTML='<b style="color:#d92d20">🔔 发现新版（'+String(d.sha||'').slice(0,8)+'）—— 点「更新管理台程序」安装</b>';
+       var sha=String(d.sha||'').slice(0,8);
+       if(tip){ tip.innerHTML='<b style="color:#d92d20">🔔 发现新版（'+sha+'）</b>'; }
+       upModal('<div style="font-size:15px">🔔 发现新版：<b>'+esc(sha)+'</b></div>'
+         +'<div class=hint style="margin-top:8px">更新前会自动备份当前版本；更新期间面板会重启（约 3-8 秒）</div>'
+         +'<div style="margin-top:18px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">'
+         +'<button class=btn onclick="doUpdate()">立即更新</button>'
+         +'<button class=btn2 onclick="upClose()">以后再说</button></div>');
      }else if(d && d.ok){
-       tip.innerHTML='<b style="color:#12b76a">✓ '+esc(d.msg||'已是最新')+'</b>';
+       if(tip){ tip.innerHTML='<b style="color:#12b76a">✓ '+esc(d.msg||'已是最新')+'</b>'; }
+       upModal('<div style="font-size:15px">✓ '+esc(d.msg||'已是最新')+'</div>'
+         +'<div style="margin-top:18px;text-align:right"><button class=btn onclick="upClose()">知道了</button></div>');
      }else{
-       tip.innerHTML='<b style="color:#d92d20">检查失败：'+esc((d&&d.error)||'')+'</b>';
+       if(tip){ tip.innerHTML='<b style="color:#d92d20">检查失败：'+esc((d&&d.error)||'')+'</b>'; }
+       upFail('检查失败：'+esc((d&&d.error)||''));
      }
    })
-   .catch(function(e){ if(tip){ tip.innerHTML='<b style="color:#d92d20">检查失败：'+esc(e)+'</b>'; } });
+   .catch(function(e){ if(tip){ tip.innerHTML='<b style="color:#d92d20">检查失败：'+esc(e)+'</b>'; } upFail('检查失败：'+esc(e)); });
+}
+function doUpdate(){
+  upModal('⏳ 正在更新管理台程序…<div class=hint style="margin-top:8px">下载 → 语法校验 → 备份 → 替换 → 重启面板</div>');
+  apiPost('/api/self-update',{apply:true},1).then(function(d){
+    if(d && d.ok && !/已经是最新/.test(d.msg||'')){ setTimeout(function(){location.reload()},9000); }
+  });
 }
 function loadLogs(){ fetch('/api/logs?n=200').then(r=>r.json()).then(function(d){$('#logs').textContent=d.log||''}); }
 loadStatus();
