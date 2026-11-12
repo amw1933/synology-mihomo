@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.6.1"
+APP_VERSION = "2.6.2"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -3018,7 +3018,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.6.1</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.6.2</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -5952,6 +5952,7 @@ function ipMap(lat,lon,tip){
   L.marker([lat,lon]).addTo(IPMAP).bindPopup(tip).openPopup();
   setTimeout(function(){ try{ IPMAP.invalidateSize(); }catch(e){} },150);
 }
+setTimeout(function(){ if(!NI){ niLoad(0); } },900);
 function ipDetect(){ fetch('/api/ip').then(r=>r.json()).then(function(d){ if(d.ip){$('#t_ip').value=d.ip;$('#t_ab').value=d.ip;} }); }
 function applyAll(){ apiPost('/api/apply',{},0); }
 function kdRestart(){ if(!confirm('重启内核容器 mihomo？')) return; apiPost('/api/kernel-restart',{},0); }
