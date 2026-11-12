@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "1.0"
+APP_VERSION = "1.5"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -2176,6 +2176,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
+ <span class="pill" id=ver style="background:#3b82f6">v1.5</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -2539,6 +2540,8 @@ function auToggle(){
 }
 fetch('/api/settings').then(r=>r.json()).then(function(d){
   var s=d.settings||{}, c=document.getElementById('t_au'), tip=document.getElementById('upTip');
+  var vv=document.getElementById('ver');
+  if(vv && s.auto_update_last){ vv.title='上次同步的提交：'+String(s.auto_update_last).slice(0,8); }
   if(c){ c.checked=(s.auto_update_panel!==false); }
   if(tip && s.update_available){
     tip.innerHTML='<b style="color:#d92d20">🔔 发现新版（'+String(s.update_available).slice(0,8)+'）—— 点左边按钮更新</b>';
