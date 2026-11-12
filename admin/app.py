@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "1.5"
+APP_VERSION = "1.6"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1196,6 +1196,27 @@ def sync_scripts():
     return {"ok": all(r["ok"] for r in res), "items": res}
 
 
+def fetch_app_py():
+    """下载仓库里的 admin/app.py（带国内镜像兜底，返回 (bytes, err)）"""
+    import hashlib as _hl
+    ts = int(time.time())
+    rel = "admin/app.py?t=%d" % ts
+    urls = [
+        "%s/%s" % (RAW_BASE.rstrip("/"), rel),
+        "https://gh-proxy.com/https://raw.githubusercontent.com/amw1933/synology-mihomo/main/" + rel,
+        "https://ghfast.top/https://raw.githubusercontent.com/amw1933/synology-mihomo/main/" + rel,
+        "https://ghproxy.net/https://raw.githubusercontent.com/amw1933/synology-mihomo/main/" + rel,
+        "https://cdn.jsdelivr.net/gh/amw1933/synology-mihomo@main/admin/app.py?t=%d" % ts,
+    ]
+    err = ""
+    for u in urls:
+        data, e = http_fetch(u, timeout=60)
+        if data and len(data) > 50000:
+            return data, ""
+        err = e or ("%d 字节" % len(data or b""))
+    return None, err
+
+
 def _self_restart():
     """重启管理台（改完自己的程序文件后生效）
 
@@ -1229,18 +1250,20 @@ def self_update(apply=True):
 
     apply=False 时只做检查，不写任何文件。
     """
-    url = "%s/admin/app.py?t=%d" % (RAW_BASE.rstrip("/"), int(time.time()))
-    data, err = http_fetch(url, timeout=60)
-    if not data or len(data) < 50000:
-        return {"ok": False, "error": "下载失败或文件不完整：%s" % (err or ("%d 字节" % len(data or b"")))}
+    data, err = fetch_app_py()
+    if not data:
+        log("更新管理台程序失败：下载不到最新文件（%s）" % err)
+        return {"ok": False, "error": "下载失败：%s" % err}
     src = data.decode("utf-8", "replace")
     try:
         compile(src, "app.py", "exec")
     except SyntaxError as e:
+        log("更新管理台程序失败：新版本语法检查未通过")
         return {"ok": False, "error": "新版本语法检查未通过，已放弃：%s" % e}
     for mark in ("LOGIN_PAGE", "def main(", "proxy-groups"):
         if mark not in src:
-            return {"ok": False, "error": "新版本内容不完整（缺少 %s），已放弃" % mark}
+            log("更新管理台程序失败：新版本内容不完整（缺 %s）" % mark)
+        return {"ok": False, "error": "新版本内容不完整（缺少 %s），已放弃" % mark}
     cur_path = os.path.abspath(__file__)
     try:
         with open(cur_path, "r", encoding="utf-8", errors="replace") as f:
@@ -1285,7 +1308,7 @@ def self_update(apply=True):
         if _sha:
             _s2["auto_update_last"] = _sha
         _s2["update_available"] = ""
-        save_settings(_s2)
+        save_settings(_s2)   # 现在判断以文件内容为准，这里只是留个记录
     except Exception:  # noqa: BLE001
         pass
     threading.Thread(target=_self_restart, daemon=True).start()
@@ -1310,30 +1333,30 @@ def repo_latest_sha():
 
 
 def update_check_once():
-    """检查仓库有没有新版：只写「有更新」标记，不下载、不安装（安装由手动按钮触发）"""
+    """检查仓库有没有新版：按【文件内容】判断（比对 md5），只写提示标记，不下载不安装"""
     s = load_settings()
     if not s.get("auto_update_panel", True):
         return {"ok": True, "enabled": False, "msg": "自动检查更新已关闭"}
-    sha = repo_latest_sha()
-    if not sha:
-        return {"ok": False, "error": "读取仓库版本失败"}
-    last = str(s.get("auto_update_last") or "")
-    if not last:
-        s["auto_update_last"] = sha          # 首次只记基线
-        s["update_available"] = ""
-        save_settings(s)
-        log("更新检查：已记录基线版本 %s" % sha[:8])
-        return {"ok": True, "available": False, "msg": "已记录基线"}
-    if sha != last:
-        s["update_available"] = sha
-        save_settings(s)
-        log("更新检查：发现新版 %s（本地记录 %s）—— 页面会提示，点「更新管理台程序」安装" % (sha[:8], last[:8]))
-        return {"ok": True, "available": True, "sha": sha[:8],
-                "msg": "发现新版 %s —— 点「更新管理台程序」安装" % sha[:8]}
-    if s.get("update_available"):
-        s["update_available"] = ""
-        save_settings(s)
-    return {"ok": True, "available": False, "msg": "已是最新（%s）" % last[:8]}
+    data, err = fetch_app_py()
+    if not data:
+        log("更新检查：下载失败（%s）" % err)
+        return {"ok": False, "error": "读取仓库版本失败：%s" % err}
+    try:
+        cur = open(os.path.abspath(__file__), "rb").read()
+    except Exception:
+        cur = b""
+    if data == cur:
+        if s.get("update_available"):
+            s["update_available"] = ""
+            save_settings(s)
+        return {"ok": True, "available": False, "msg": "已是最新（%d 字节）" % len(cur)}
+    import hashlib as _hl
+    mark = _hl.md5(data).hexdigest()[:8]
+    s["update_available"] = mark
+    save_settings(s)
+    log("更新检查：发现新版（仓库 %d 字节 %s / 本地 %d 字节）" % (len(data), mark, len(cur)))
+    return {"ok": True, "available": True, "sha": mark,
+            "msg": "发现新版 %s —— 点「更新管理台程序」安装" % mark}
 
 
 def auto_update_loop():
@@ -2177,7 +2200,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v1.5</span>
+ <span class="pill" id=ver style="background:#3b82f6">v1.6</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
