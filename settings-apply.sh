@@ -20,7 +20,7 @@ PROXY=$(get proxy_ip);     [ -n "${PROXY:-}" ] || PROXY=$(first_ip)
 ADMIN=$(get admin_bind);   [ -n "${ADMIN:-}" ] || ADMIN=0.0.0.0
 PROXYP=$(get proxy_port);  [ -n "${PROXYP:-}" ] || PROXYP=7890
 PANELP=$(get panel_port);  [ -n "${PANELP:-}" ] || PANELP=9090
-ADMINP=$(get admin_port);  [ -n "${ADMINP:-}" ] || ADMINP=9093
+ADMINP=$(get admin_port);  [ -n "${ADMINP:-}" ] || ADMINP=9090
 
 # 网卡也自动找（群晖一般是 ovs_eth0），广播地址交给内核算
 IFACE=$(ip route 2>/dev/null | sed -n 's/^default .* dev \([^ ]*\).*/\1/p' | head -n1)
