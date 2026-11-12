@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "1.6"
+APP_VERSION = "1.7"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1212,7 +1212,10 @@ def fetch_app_py():
     for u in urls:
         data, e = http_fetch(u, timeout=60)
         if data and len(data) > 50000:
-            return data, ""
+            txt = data.decode("utf-8", "replace")
+            if "def main(" in txt and "proxy-groups" in txt:
+                return data, ""
+            e = "内容不像 app.py（%d 字节）" % len(data)
         err = e or ("%d 字节" % len(data or b""))
     return None, err
 
@@ -1255,15 +1258,6 @@ def self_update(apply=True):
         log("更新管理台程序失败：下载不到最新文件（%s）" % err)
         return {"ok": False, "error": "下载失败：%s" % err}
     src = data.decode("utf-8", "replace")
-    try:
-        compile(src, "app.py", "exec")
-    except SyntaxError as e:
-        log("更新管理台程序失败：新版本语法检查未通过")
-        return {"ok": False, "error": "新版本语法检查未通过，已放弃：%s" % e}
-    for mark in ("LOGIN_PAGE", "def main(", "proxy-groups"):
-        if mark not in src:
-            log("更新管理台程序失败：新版本内容不完整（缺 %s）" % mark)
-        return {"ok": False, "error": "新版本内容不完整（缺少 %s），已放弃" % mark}
     cur_path = os.path.abspath(__file__)
     try:
         with open(cur_path, "r", encoding="utf-8", errors="replace") as f:
@@ -1272,14 +1266,25 @@ def self_update(apply=True):
         cur = ""
     note = ""
     cur_bytes = len(cur.encode("utf-8"))
-    if len(data) < cur_bytes:
-        note = "（注意：仓库这版比当前小 %d 字节，可能是旧版）" % (cur_bytes - len(data))
+    # ① 先看是不是本来就已经一样了 —— 这种情况直接说清楚，不做任何写入
     if cur and cur.strip() == src.strip():
         return {"ok": True, "msg": "已经是最新版本（%d 字节）" % len(data)}
+    if len(data) < cur_bytes:
+        note = "（注意：仓库这版比当前小 %d 字节，可能是旧版）" % (cur_bytes - len(data))
+    # ② 再校验下载到的东西像不像我们的程序
+    try:
+        compile(src, "app.py", "exec")
+    except SyntaxError as e:
+        log("更新管理台程序失败：新版本语法检查未通过")
+        return {"ok": False, "error": "新版本语法检查未通过，已放弃：%s" % e}
+    for mark in ("LOGIN_PAGE", "def main(", "proxy-groups"):
+        if mark not in src:
+            log("更新管理台程序失败：新版本内容不完整（缺少 %s），已放弃" % mark)
+            return {"ok": False, "error": "新版本内容不完整（缺少 %s），已放弃" % mark}
     if not apply:
         return {"ok": True,
                 "msg": "检查通过：可以更新到 %d 字节（当前 %d 字节）%s，尚未写入任何文件" % (len(data), cur_bytes, note),
-                "detail": {"url": url.split("?")[0]}}
+                "detail": {}}
     ts = time.strftime("%Y%m%d-%H%M%S")
     bp = ""
     try:
@@ -2200,7 +2205,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v1.6</span>
+ <span class="pill" id=ver style="background:#3b82f6">v1.7</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
