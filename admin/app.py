@@ -38,7 +38,7 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
-APP_VERSION = "2.9.7"
+APP_VERSION = "2.9.8"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1273,6 +1273,46 @@ def fetch_app_py():
     return None, err
 
 
+def _compose_file():
+    """找工程目录里的 compose 文件（SSH 部署是 compose.yaml，Container Manager 是 docker-compose.yml）"""
+    for n in ("compose.yaml", "docker-compose.yml", "docker-compose.yaml"):
+        p = os.path.join(BASE, n)
+        if os.path.exists(p):
+            return p
+    return ""
+
+
+def image_update():
+    """拉最新镜像并重建管理台容器 —— 持久生效，容器重建后不会被镜像版本打回。
+
+    先同步把镜像拉下来（这步不影响当前进程），再用后台线程重建容器
+    （重建会杀掉本进程，所以不能同步做，否则响应发不出去）。
+    """
+    comp = _compose_file()
+    if not comp:
+        return {"ok": False, "error": "工程目录里没有 compose 文件，无法走镜像更新"}
+    log("镜像更新：开始拉取 %s（%s）" % (APP_NAME, os.path.basename(comp)))
+    rc, out, err = run_cmd([DOCKER, "compose", "-f", comp, "pull", APP_NAME], timeout=900)
+    tail = ((out or "")[-400:] + " " + (err or "")[-400:]).strip()
+    if rc != 0:
+        log("镜像更新：拉取失败 rc=%s %s" % (rc, tail[-300:]))
+        return {"ok": False, "error": "拉取镜像失败：%s" % tail[-300:]}
+
+    def _up():
+        time.sleep(1)
+        try:
+            rc2, o2, e2 = run_cmd([DOCKER, "compose", "-f", comp, "up", "-d", APP_NAME], timeout=600)
+            log("镜像更新：重建容器 rc=%s %s" % (rc2, ((o2 or "") + (e2 or ""))[-200:]))
+        except Exception as e:  # noqa: BLE001
+            log("镜像更新：重建容器异常 %r" % (e,))
+
+    threading.Thread(target=_up, daemon=True).start()
+    return {"ok": True,
+            "msg": "已拉取最新镜像，正在重建管理台容器",
+            "hint": "约 10~20 秒后恢复；页面会自动刷新，若没回来请手动刷新一次。本次更新写入镜像，容器重建也不会打回。",
+            "via": "image"}
+
+
 def _self_restart():
     """重启管理台（改完自己的程序文件后生效）
 
@@ -1338,6 +1378,11 @@ def self_update(apply=True):
         return {"ok": True,
                 "msg": "检查通过：可以更新到 %d 字节（当前 %d 字节）%s，尚未写入任何文件" % (len(data), cur_bytes, note),
                 "detail": {}}
+    # 优先走镜像更新（持久生效）；docker 不可用时再退回「覆盖容器内文件」
+    img = image_update()
+    if img.get("ok"):
+        return img
+    log("镜像更新不可用（%s），退回覆盖文件方式" % (img.get("error") or "未知原因"))
     ts = time.strftime("%Y%m%d-%H%M%S")
     bp = ""
     try:
@@ -3441,7 +3486,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
   <div class=hmid>
    <span class=mk><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.2v5.9c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6.2z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.6"/></svg></span>
    <h1>mihomo 网页管理台<small>群晖 NAS · 单端口旁路由</small></h1>
-   <span class="pill" id=ver>v2.9.7</span>
+   <span class="pill" id=ver>v2.9.8</span>
    <span class="pill gray2" id=hd>群晖 NAS</span>
    <button id=mhuiBtn class=nodes onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()">节点面板（内嵌）</button>
   </div>
@@ -6543,9 +6588,9 @@ function chkUpd(){
    .catch(function(e){ if(tip){ tip.innerHTML='<b style="color:#d92d20">检查失败：'+esc(e)+'</b>'; } upFail('检查失败：'+esc(e)); });
 }
 function doUpdate(){
-  upModal('⏳ 正在更新管理台程序…<div class=hint style="margin-top:8px">下载 → 语法校验 → 备份 → 替换 → 重启面板</div>');
+  upModal('⏳ 正在更新管理台程序…<div class=hint style="margin-top:8px">拉取最新镜像 → 重建容器（约 10~20 秒，期间面板会短暂断开）</div>');
   apiPost('/api/self-update',{apply:true},1).then(function(d){
-    if(d && d.ok && !/已经是最新/.test(d.msg||'')){ setTimeout(function(){location.reload()},9000); }
+    if(d && d.ok && !/已经是最新/.test(d.msg||'')){ setTimeout(function(){location.reload()},22000); }
   });
 }
 function loadLogs(){ fetch('/api/logs?n=200').then(r=>r.json()).then(function(d){$('#logs').textContent=d.log||''}); }
