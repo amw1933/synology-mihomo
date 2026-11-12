@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.9.5"
+APP_VERSION = "2.9.6"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -3350,6 +3350,10 @@ html.dark .g2{color:#4ade80}html.dark .y2{color:#fbbf24}html.dark .r2{color:#f87
 .ipmi td:first-child{color:var(--t3);width:106px}
 .ok2{color:var(--ok);font-weight:700}.no2{color:var(--t3)}
 
+/* ===================== 卡片收起 / 展开 ===================== */
+.card.collapsed .colbody{display:none}
+.card.collapsed h2{padding-bottom:0;border-bottom:0;margin-bottom:0}
+
 /* ===================== 彩色图标 ===================== */
 .ic{width:28px;height:28px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
 .ic svg{width:16px;height:16px;display:block}
@@ -3430,7 +3434,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
   <div class=hmid>
    <span class=mk><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.2v5.9c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6.2z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.6"/></svg></span>
    <h1>mihomo 网页管理台<small>群晖 NAS · 单端口旁路由</small></h1>
-   <span class="pill" id=ver>v2.9.5</span>
+   <span class="pill" id=ver>v2.9.6</span>
    <span class="pill gray2" id=hd>群晖 NAS</span>
    <button id=mhuiBtn class=nodes onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()">节点面板（内嵌）</button>
   </div>
@@ -3460,15 +3464,21 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
    <div id=nil></div>
    <div class=hint>国内测试走<b>直连</b>，国外 / 墙外走<b>代理</b>（都是面板所在群晖的真实出口）；延迟为群晖经 mihomo 实测（同一条连接预热后取最小值，所以比首次冷连接低）；<span id=nit></span></div></div>
   <div class=card><h2><span class="ic ic-v"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L5 18a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M7.5 14h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 分流测试 <span class=sp></span>
+    <button class=btn2 data-body=stbody onclick="colToggle(this)">展开</button>
     <button class=btn2 onclick="stLoad(1)">开始测试</button></h2>
+   <div class="colbody" id=stbody>
    <table><thead><tr><th>业务组</th><th>代表站点</th><th>命中规则</th><th>实际策略链</th><th>判定</th><th>延迟</th></tr></thead><tbody id=st></tbody></table>
    <div class=hint id=sth>点「开始测试」：每个业务组各发一个真实请求，同时读 mihomo 的连接记录，看它<b>命中了哪条规则</b>、<b>实际走了哪条策略链</b>（链尾就是最终业务组），再和该组应有的走向比对。</div>
-   <div class=hint>延迟取该站点 <code>favicon</code> / <code>robots.txt</code> / <code>首页</code> 三者中最快的那个（小资源、只等响应头），所以不是页面加载时间；个别站点（如 OneDrive）本身落地线路慢，数值偏高是真实的。</div></div>
+   <div class=hint>延迟取该站点 <code>favicon</code> / <code>robots.txt</code> / <code>首页</code> 三者中最快的那个（小资源、只等响应头），所以不是页面加载时间；个别站点（如 OneDrive）本身落地线路慢，数值偏高是真实的。</div>
+   </div>
+  </div>
 
   <div class=card><h2><span class="ic ic-r"><svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-9a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 4.6-7 9-7 9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M8 12h2l1.5-2 2 4 1.5-2h1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 健康自检（7 项）</h2><table><tbody id=hc></tbody></table>
    <div class=hint>健康自检会真实尝试：容器状态、配置校验、经代理出网、面板接口、磁盘、程序文件、定时任务。</div></div>
-  <div class=card><h2><span class="ic ic-k"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v10l-8 4-8-4V7z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M4 7l8 4 8-4M12 11v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 代理提供者（机场）</h2><table>
-   <thead><tr><th>提供者</th><th>节点数</th><th>更新时间</th></tr></thead><tbody id=pv></tbody></table></div>
+  <div class=card><h2><span class="ic ic-k"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v10l-8 4-8-4V7z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M4 7l8 4 8-4M12 11v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 代理提供者（机场） <span class=sp></span>
+    <button class=btn2 data-body=pvbody onclick="colToggle(this)">展开</button></h2>
+   <div class="colbody" id=pvbody><table>
+   <thead><tr><th>提供者</th><th>节点数</th><th>更新时间</th></tr></thead><tbody id=pv></tbody></table></div></div>
  </section>
 
  <section id=tab-airports hidden>
@@ -6272,6 +6282,25 @@ function nilRender(items){
   var tn=document.getElementById('nit');
   if(tn){ tn.textContent=' · 更新于 '+new Date().toLocaleTimeString(); }
 }
+function colToggle(b){
+  var id=b.getAttribute('data-body');
+  var box=document.getElementById(id); if(!box){ return; }
+  var on=box.parentNode.classList.toggle('collapsed');
+  b.textContent=(on?'展开':'收起');
+  try{ localStorage.setItem('mh-col-'+id, on?'1':'0'); }catch(e){}
+}
+(function(){
+  var bs=document.querySelectorAll('button[data-body]'), i;
+  for(i=0;i<bs.length;i++){
+    var b=bs[i], id=b.getAttribute('data-body');
+    var box=document.getElementById(id); if(!box){ continue; }
+    var v='';
+    try{ v=localStorage.getItem('mh-col-'+id)||''; }catch(e){}
+    var on=(v==='0')?false:true;   // 默认收起，点过「展开」才展开
+    if(on){ box.parentNode.classList.add('collapsed'); }
+    b.textContent=(on?'展开':'收起');
+  }
+})();
 function stLoad(force){
   var b=document.getElementById('st');
   if(b){ b.innerHTML='<tr><td colspan=6>测试中…（每个业务组发一个请求，一般 2~4 秒出表）</td></tr>'; }
