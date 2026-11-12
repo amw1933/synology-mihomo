@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.8.2"
+APP_VERSION = "2.8.3"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1854,13 +1854,30 @@ def _conn_match(want, host):
     return host == want or host.endswith("." + want) or want.endswith("." + host)
 
 
-def split_test(force=False):
+SPLIT_LAT_PATH = "/favicon.ico"
+
+
+def _split_lat(rows):
+    """给 rows 补延迟：暖连接 + HEAD，只测 favicon 这种小资源（404 也照测），
+    不碰首页后端，所以这才是「真延迟」而不是「服务端生成时间」。"""
+    lat = _parallel([(r["group"], (lambda h=r["host"]: _lat_one("https://%s%s" % (h, SPLIT_LAT_PATH), 6.0, 2)))
+                     for r in rows], 22)
+    for r in rows:
+        r["ms"] = int(lat.get(r["group"]) or 0)
+
+
+def split_test(force=False, with_lat=False):
     """分流测试：每个业务组取一个代表站点，请求它的同时读 /connections，
-    拿到「命中的规则 + 实际策略链」，再和该组应有的走向比对。"""
+    拿到「命中的规则 + 实际策略链」，再和该组应有的走向比对。
+    with_lat=False 只抓连接（快，2~4 秒出表）；True 再把延迟补上。"""
     now = time.time()
     with _NI_LOCK:
-        if not force and _SPLIT_CACHE["d"] and now - _SPLIT_CACHE["t"] < 60:
-            return _SPLIT_CACHE["d"]
+        cached = _SPLIT_CACHE["d"]
+        age = now - _SPLIT_CACHE["t"]
+    if cached and not force and (age < 60 or with_lat):
+        if with_lat and any(not r.get("ms") for r in cached["rows"]):
+            _split_lat(cached["rows"])
+        return cached
     s = load_settings()
 
     def fire(host):
@@ -1898,10 +1915,6 @@ def split_test(force=False):
         if len(found) < len(SPLIT_TARGETS):
             time.sleep(0.15)
 
-    # 延迟：暖连接法（预热 1 次 + 连测 2 次取最小），与上方 8 个站点同一套算法
-    lat = _parallel([(grp, (lambda h=host: _lat_one("https://%s/" % h, 6.0, 2)))
-                     for grp, host in SPLIT_TARGETS], 22)
-
     rows = []
     for grp, host in SPLIT_TARGETS:
         c = found.get(grp) or {}
@@ -1917,11 +1930,13 @@ def split_test(force=False):
             ok = 1 if top == grp else 0
         rows.append({"group": grp, "host": host, "rule": rule, "payload": payload,
                      "chain": " > ".join(chains), "top": top, "ok": ok,
-                     "ms": int(lat.get(grp) or 0)})
+                     "ms": 0})
     d = {"rows": rows, "ts": int(now)}
     with _NI_LOCK:
         _SPLIT_CACHE["d"] = d
         _SPLIT_CACHE["t"] = now
+    if with_lat:
+        _split_lat(rows)
     return d
 
 
@@ -2305,7 +2320,7 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/latency":
                 return self._json({"ok": True, "items": latency_all("force" in args)})
             if p == "/api/splittest":
-                return self._json({"ok": True, "data": split_test("force" in args)})
+                return self._json({"ok": True, "data": split_test("force" in args, "lat" in args)})
             if p == "/api/ipinfo":
                 return self._json({"ok": True, "data": ip_detail(args.get("ip"))})
             if p == "/api/logs":
@@ -3097,7 +3112,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.8.2</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.8.3</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -5918,11 +5933,14 @@ function nilRender(items){
   if(tn){ tn.textContent=' · 更新于 '+new Date().toLocaleTimeString(); }
 }
 function stLoad(force){
-  var b=document.getElementById('st'), hh=document.getElementById('sth');
-  if(b){ b.innerHTML='<tr><td colspan=7>测试中…（并发探测 17 个站点，约 10~25 秒）</td></tr>'; }
+  var b=document.getElementById('st');
+  if(b){ b.innerHTML='<tr><td colspan=6>测试中…（每个业务组发一个请求，一般 2~4 秒出表）</td></tr>'; }
   fetch('/api/splittest'+(force?'?force=1':'')).then(function(r){return r.json()}).then(function(d){
     ST=d.data||{}; stRender();
-  }).catch(function(){ if(b){ b.innerHTML='<tr><td colspan=7>测试失败</td></tr>'; } });
+    fetch('/api/splittest?lat=1').then(function(r){return r.json()}).then(function(d2){
+      if(d2 && d2.data){ ST=d2.data; stRender(); }
+    }).catch(function(){});
+  }).catch(function(){ if(b){ b.innerHTML='<tr><td colspan=6>测试失败</td></tr>'; } });
 }
 function stRender(){
   var b=document.getElementById('st');
@@ -5936,7 +5954,7 @@ function stRender(){
       +'<td>'+(r.rule ? esc(r.rule)+'<div class=l2>'+esc(r.payload||'')+'</div>' : '—')+'</td>'
       +'<td style="font-size:12px">'+esc(r.chain||'—')+'</td>'
       +'<td>'+v+'</td>'
-      +'<td>'+(r.ms ? r.ms+'ms' : '—')+'</td></tr>';
+      +'<td>'+(r.ms ? r.ms+'ms' : '<span class=hint>测…</span>')+'</td></tr>';
   }
   b.innerHTML=h||'<tr><td colspan=6>没有结果</td></tr>';
   var sth=document.getElementById('sth');
