@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.7"
+APP_VERSION = "2.8"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1586,24 +1586,24 @@ LAT_SITES = [
 #   trace  = 访问 https://<地址>/cdn-cgi/trace，正文 ip= 就是该站点看到的客户端 IP
 #   header = 请求地址，从响应头 X-Request-Ip / cdn-user-ip 取
 #   json   = 请求地址，正文里取第一个 IPv4
+# 分流测试目标：与「策略」页的业务组一一对应 (业务组名, 代表站点)
+#   做法：请求该站点，同时读 mihomo 的 /connections，
+#   拿到「命中的规则」和「实际策略链」（链尾就是最终业务组），据此判定走向是否正确。
 SPLIT_TARGETS = [
-    ("qq", "腾讯", "国内", "json", "https://r.inews.qq.com/api/ip2city?otype=json", ""),
-    ("pconline", "太平洋", "国内", "json", "https://whois.pconline.com.cn/ipJson.jsp?json=true", ""),
-    ("taobao", "阿里淘宝", "国内", "json", "https://www.taobao.com/help/getip.php", ""),
-    ("bytedance-cn", "字节跳动", "国内", "header", "https://perfops.byte-test.com/500b-bench.jpg", ""),
-    ("cloudflare-cn", "科赋锐", "国内", "trace", "", "perfops.cloudflareperf.com"),
-    ("qualcomm-cn", "高通中国", "国内", "trace", "", "www.qualcomm.cn"),
-    ("cloudflare", "Cloudflare", "国际", "trace", "", "ip.skk.moe"),
-    ("discord", "Discord", "国际", "trace", "", "gateway.discord.gg"),
-    ("visa", "Visa", "国际", "trace", "", "www.visa.com"),
-    ("x", "X (Twitter)", "国际", "trace", "", "x.com"),
-    ("medium", "Medium", "国际", "trace", "", "medium.com"),
-    ("chatgpt", "ChatGPT", "AI", "trace", "", "chatgpt.com"),
-    ("claude", "Claude", "AI", "trace", "", "claude.ai"),
-    ("grok", "Grok", "AI", "trace", "", "grok.com"),
-    ("openai", "OpenAI", "AI", "trace", "", "openai.com"),
-    ("anthropic", "Anthropic", "AI", "trace", "", "anthropic.com"),
-    ("perplexity", "Perplexity", "AI", "trace", "", "www.perplexity.ai"),
+    ("AI", "chatgpt.com"),
+    ("GitHub", "api.github.com"),
+    ("YouTube", "www.youtube.com"),
+    ("Google", "www.google.com"),
+    ("NETFLIX", "www.netflix.com"),
+    ("Steam", "store.steampowered.com"),
+    ("OneDrive", "onedrive.live.com"),
+    ("Microsoft", "www.microsoft.com"),
+    ("Apple", "www.apple.com"),
+    ("TikTok", "www.tiktok.com"),
+    ("Telegram", "t.me"),
+    ("Wallet", "www.paypal.com"),
+    ("漏网之鱼", "www.cloudflare.com"),
+    ("直连", "www.taobao.com"),
 ]
 
 CN_SRC = [("太平洋", "https://whois.pconline.com.cn/ipJson.jsp?json=true"),
@@ -1821,65 +1821,83 @@ def _geo_one(ip):
     return out
 
 
-def _probe_ip(kind, url, host=""):
-    """按探针类型取「该站点看到的客户端 IP」，返回 (ip, 毫秒)"""
-    if kind == "trace":
-        ms, code, body, hs = _http_probe("https://%s/cdn-cgi/trace" % host, 7.5)
-        if code != 200:
-            return "", ms
-        for ln in (body or "").split("\n"):
-            if ln.startswith("ip="):
-                return ln[3:].strip(), ms
-        return "", ms
-    ms, code, body, hs = _http_probe(url, 7.5)
-    if kind == "header":
-        for k in ("x-request-ip", "cdn-user-ip", "x-real-ip", "x-client-ip", "cf-connecting-ip"):
-            if hs.get(k):
-                return str(hs[k]).strip(), ms
-        return _ipv4(body), ms
-    return _ipv4(body), ms
+def _conn_host(c):
+    """从 /connections 的一条记录里取主机名"""
+    m = (c or {}).get("metadata") or {}
+    return str(m.get("host") or m.get("sniffHost") or "").strip().lower()
+
+
+def _conn_match(want, host):
+    """主机名是否匹配（含子域双向包含）"""
+    if not want or not host:
+        return False
+    return host == want or host.endswith("." + want) or want.endswith("." + host)
 
 
 def split_test(force=False):
-    """逐站点探测：对方看到你的 IP 是直连出口还是代理出口"""
+    """分流测试：每个业务组取一个代表站点，请求它的同时读 /connections，
+    拿到「命中的规则 + 实际策略链」，再和该组应有的走向比对。"""
     now = time.time()
     with _NI_LOCK:
-        if not force and _SPLIT_CACHE["d"] and now - _SPLIT_CACHE["t"] < 90:
+        if not force and _SPLIT_CACHE["d"] and now - _SPLIT_CACHE["t"] < 60:
             return _SPLIT_CACHE["d"]
-    base = net_info(False)
-    cn_ip = (base.get("cn") or {}).get("ip") or ""
-    os_ip = (base.get("os") or {}).get("ip") or ""
-    jobs = []
-    for key, name, grp, kind, url, host in SPLIT_TARGETS:
-        jobs.append((key, (lambda k=kind, u=url, h=host: _probe_ip(k, u, h))))
-    got = _parallel(jobs, 26)
-    uniq = []
-    for key, name, grp, kind, url, host in SPLIT_TARGETS:
-        v = got.get(key) or ("", 0)
-        ip = (v[0] or "").strip()
-        if ip and ip not in uniq and len(uniq) < 6:
-            uniq.append(ip)
-    gres = _parallel([(ip, (lambda i=ip: _geo_one(i))) for ip in uniq], 18)
-    geo = {}
-    for ip in uniq:
-        geo[ip] = gres.get(ip) or _GEO_CACHE.get(ip) or {}
+    s = load_settings()
+    ms_map = {}
+
+    def fire(host):
+        t0 = time.time()
+        try:
+            rq = urllib.request.Request("https://%s/" % host,
+                                        headers={"User-Agent": NET_UA, "Accept": "*/*"})
+            with urllib.request.urlopen(rq, timeout=9.0) as r:
+                r.read(512)
+                ms_map[host] = int((time.time() - t0) * 1000)
+                time.sleep(1.5)          # 保持连接，让 /connections 抓得到
+        except Exception:
+            if host not in ms_map:
+                ms_map[host] = 0
+
+    for grp, host in SPLIT_TARGETS:
+        threading.Thread(target=fire, args=(host,), daemon=True).start()
+
+    found = {}
+    t_end = time.time() + 13
+    while time.time() < t_end and len(found) < len(SPLIT_TARGETS):
+        try:
+            code, body = ctrl_get(s, "/connections")
+            if code == 200:
+                d = json.loads(body)
+                for c in (d.get("connections") or []):
+                    h = _conn_host(c)
+                    if not h:
+                        continue
+                    for grp, host in SPLIT_TARGETS:
+                        if grp in found:
+                            continue
+                        if _conn_match(host.lower(), h):
+                            found[grp] = c
+        except Exception:
+            pass
+        if len(found) < len(SPLIT_TARGETS):
+            time.sleep(0.15)
+
     rows = []
-    for key, name, grp, kind, url, host in SPLIT_TARGETS:
-        v = got.get(key) or ("", 0)
-        ip, ms = (v[0] or "").strip(), int(v[1] or 0)
-        verdict = ""
-        if ip:
-            if cn_ip and ip == cn_ip:
-                verdict = "直连"
-            elif os_ip and ip == os_ip:
-                verdict = "代理"
-            else:
-                verdict = "其他"
-        g = geo.get(ip) or {}
-        rows.append({"key": key, "name": name, "group": grp, "ip": ip, "ms": ms,
-                     "verdict": verdict, "country": g.get("country") or "",
-                     "city": g.get("city") or "", "asn": g.get("asn") or ""})
-    d = {"rows": rows, "cn_ip": cn_ip, "os_ip": os_ip, "ts": int(now)}
+    for grp, host in SPLIT_TARGETS:
+        c = found.get(grp) or {}
+        chains = [str(x) for x in (c.get("chains") or [])]
+        top = chains[-1] if chains else ""
+        rule = str(c.get("rule") or "")
+        payload = str(c.get("rulePayload") or "")
+        if not c:
+            ok = -1
+        elif grp == "直连":
+            ok = 1 if (top == "直连" or "direct" in top.lower()) else 0
+        else:
+            ok = 1 if top == grp else 0
+        rows.append({"group": grp, "host": host, "rule": rule, "payload": payload,
+                     "chain": " > ".join(chains), "top": top, "ok": ok,
+                     "ms": int(ms_map.get(host) or 0)})
+    d = {"rows": rows, "ts": int(now)}
     with _NI_LOCK:
         _SPLIT_CACHE["d"] = d
         _SPLIT_CACHE["t"] = now
@@ -3058,7 +3076,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.7</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.8</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -3080,6 +3098,11 @@ th{color:#475467;font-weight:600;font-size:12.5px}
    <div id=ni></div>
    <div id=nil></div>
    <div class=hint>国内测试走<b>直连</b>，国外 / 墙外走<b>代理</b>（都是面板所在群晖的真实出口）；延迟为群晖经 mihomo 实测（同一条连接预热后取最小值，所以比首次冷连接低）；<span id=nit></span></div></div>
+  <div class=card><h2>🧪 分流测试 <span class=sp></span>
+    <button class=btn2 onclick="stLoad(1)">开始测试</button></h2>
+   <table><thead><tr><th>业务组</th><th>代表站点</th><th>命中规则</th><th>实际策略链</th><th>判定</th><th>延迟</th></tr></thead><tbody id=st></tbody></table>
+   <div class=hint id=sth>点「开始测试」：每个业务组各发一个真实请求，同时读 mihomo 的连接记录，看它<b>命中了哪条规则</b>、<b>实际走了哪条策略链</b>（链尾就是最终业务组），再和该组应有的走向比对。</div></div>
+
   <div class=card><h2>🩺 健康自检（7 项）</h2><table><tbody id=hc></tbody></table>
    <div class=hint>健康自检会真实尝试：容器状态、配置校验、经代理出网、面板接口、磁盘、程序文件、定时任务。</div></div>
   <div class=card><h2>📦 代理提供者（机场）</h2><table>
@@ -3124,11 +3147,6 @@ th{color:#475467;font-weight:600;font-size:12.5px}
    <div style="margin-top:10px"><button class=btn onclick="crAdd()">➕ 添加一行</button>
     <span class=hint style="margin-left:8px">域名写 <code>example.com</code> 就行（自动包含它自己和所有子域）；去向可选 <b>直连</b> / <b>代理（漏网之鱼）</b> / 任意地区组或自定义组。改完点下面「保存策略并生成配置」✓</span></div>
    <div class=hint>这条规则排在规则集<b>前面</b>，所以优先级最高：选了直连就一定直连，选了某个组就一定走那个组。</div></div>
-
-  <div class=card><h2>🧪 分流测试 <span class=sp></span>
-    <button class=btn2 onclick="stLoad(1)">开始测试</button></h2>
-   <table><thead><tr><th>站点</th><th>分组</th><th>看到你的 IP</th><th>判定</th><th>归属地</th><th>ASN</th><th>延迟</th></tr></thead><tbody id=st></tbody></table>
-   <div class=hint id=sth>点「开始测试」：逐个站点探测「对方看到的你的 IP」，再与直连出口 / 代理出口比对，判定它实际走了直连还是代理。</div></div>
 
   <div class=card><h2>🧭 规则集分流</h2>
    <div id=rs></div>
@@ -5888,21 +5906,24 @@ function stLoad(force){
 function stRender(){
   var b=document.getElementById('st');
   if(!b){ return; }
-  var rows=(ST||{}).rows||[], h='', i, r, cls;
+  var rows=(ST||{}).rows||[], h='', i, r, v;
   for(i=0;i<rows.length;i++){
     r=rows[i];
-    cls = r.verdict==='直连' ? 'd' : (r.verdict==='代理' ? 'p' : 'o');
-    h+='<tr><td>'+esc(r.name)+'</td><td>'+esc(r.group||'')+'</td>'
-      +'<td>'+(r.ip ? esc(r.ip)+' <i data-ip="'+esc(r.ip)+'" style="cursor:pointer;font-style:normal;color:#94a3b8">🔍</i>' : '<span class=hint>获取失败</span>')+'</td>'
-      +'<td>'+(r.verdict ? '<span class="vd '+cls+'">'+esc(r.verdict)+'</span>' : '—')+'</td>'
-      +'<td>'+esc(r.country||'')+(r.city?'<div class=l2>'+esc(r.city)+'</div>':'')+'</td>'
-      +'<td>'+esc(r.asn||'—')+'</td>'
+    v = (r.ok===1) ? '<span class="vd d">✓ 正确</span>'
+      : ((r.ok===0) ? '<span class="vd o">✗ 不符</span>' : '<span class="vd o">未抓到</span>');
+    h+='<tr><td>'+esc(r.group)+'</td><td>'+esc(r.host||'')+'</td>'
+      +'<td>'+(r.rule ? esc(r.rule)+'<div class=l2>'+esc(r.payload||'')+'</div>' : '—')+'</td>'
+      +'<td style="font-size:12px">'+esc(r.chain||'—')+'</td>'
+      +'<td>'+v+'</td>'
       +'<td>'+(r.ms ? r.ms+'ms' : '—')+'</td></tr>';
   }
-  b.innerHTML=h||'<tr><td colspan=7>没有结果</td></tr>';
+  b.innerHTML=h||'<tr><td colspan=6>没有结果</td></tr>';
   var sth=document.getElementById('sth');
   if(sth){
-    sth.innerHTML='基准：直连出口 <code>'+esc((ST||{}).cn_ip||'未测出')+'</code>　代理出口 <code>'+esc((ST||{}).os_ip||'未测出')+'</code>';
+    var cnt={1:0,0:0,"-1":0}, k;
+    for(k=0;k<rows.length;k++){ cnt[rows[k].ok]=(cnt[rows[k].ok]||0)+1; }
+    sth.innerHTML='结果：<b style="color:#047857">正确 '+cnt[1]+'</b> ／ <b style="color:#b45309">不符 '+cnt[0]+'</b> ／ <b style="color:#94a3b8">未抓到 '+cnt[-1]+'</b>　'
+      +'（每个业务组各测一个代表站点，链尾应等于该组名）';
   }
   var ms=b.querySelectorAll('i[data-ip]'), j;
   for(j=0;j<ms.length;j++){ (function(el){ el.onclick=function(){ ipShow(el.getAttribute('data-ip')); }; })(ms[j]); }
@@ -6015,6 +6036,7 @@ function niNetTick(){
 setInterval(niLatTick, 6000);
 setInterval(niNetTick, 60000);
 setTimeout(function(){ if(!NI){ niLoad(0); } },900);
+setTimeout(function(){ if(!ST){ stLoad(0); } },3200);
 function ipDetect(){ fetch('/api/ip').then(r=>r.json()).then(function(d){ if(d.ip){$('#t_ip').value=d.ip;$('#t_ab').value=d.ip;} }); }
 function applyAll(){ apiPost('/api/apply',{},0); }
 function kdRestart(){ if(!confirm('重启内核容器 mihomo？')) return; apiPost('/api/kernel-restart',{},0); }
