@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.8.5"
+APP_VERSION = "2.8.6"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1861,23 +1861,33 @@ _SPLIT_LAT = {"running": False}
 
 
 def _split_lat(rows):
-    """给 rows 补延迟：favicon / robots.txt / 首页三条路径**全部并发**测，每行取最快值。
-    并发是关键 —— 串行时慢站点（OneDrive 这种）会把整张表拖到十几秒。"""
+    """给 rows 补延迟：三条路径全部并发，**谁先测完就先写进对应行**（逐格出现，不等全部）。"""
     if _SPLIT_LAT.get("running"):
         return
     _SPLIT_LAT["running"] = True
     try:
-        jobs = []
+        lock = threading.Lock()
+        bygrp = {r["group"]: r for r in rows}
+
+        def one(group, host, path):
+            ms = _lat_round("https://%s%s" % (host, path), 2.5, 1)
+            if not ms:
+                return
+            with lock:
+                r = bygrp.get(group)
+                if r is not None:
+                    cur = r.get("ms") or 0
+                    if cur == 0 or ms < cur:
+                        r["ms"] = int(ms)
+
+        ths = []
         for r in rows:
             for p in SPLIT_LAT_PATHS:
-                jobs.append(((r["group"], p),
-                             (lambda h=r["host"], q=p: _lat_round("https://%s%s" % (h, q), 2.5, 1))))
-        res = _parallel(jobs, 9)
-        for r in rows:
-            vals = [res.get((r["group"], p)) or 0 for p in SPLIT_LAT_PATHS]
-            vals = [v for v in vals if v]
-            if vals:
-                r["ms"] = int(min(vals))
+                th = threading.Thread(target=one, args=(r["group"], r["host"], p), daemon=True)
+                th.start()
+                ths.append(th)
+        for th in ths:
+            th.join(9)
     finally:
         _SPLIT_LAT["running"] = False
 
@@ -1901,13 +1911,18 @@ def split_test(force=False, with_lat=False):
     with _NI_LOCK:
         cached = _SPLIT_CACHE["d"]
         age = now - _SPLIT_CACHE["t"]
-    if cached and not force and (age < 60 or with_lat):
-        if with_lat:
-            if any(not r.get("ms") for r in cached["rows"]):
-                _split_lat(cached["rows"])
-            _wait_lat(cached["rows"], 5.0)
+    if cached and not force and age < 60:
         return cached
     s = load_settings()
+    # 先把空表建好、写进缓存，并立刻在后台并行测延迟（不阻塞任何返回）
+    rows = [{"group": g, "host": h, "rule": "", "payload": "", "chain": "",
+             "top": "", "ok": -1, "ms": 0} for g, h in SPLIT_TARGETS]
+    by = {r["group"]: r for r in rows}
+    d = {"rows": rows, "ts": int(now)}
+    with _NI_LOCK:
+        _SPLIT_CACHE["d"] = d
+        _SPLIT_CACHE["t"] = now
+    threading.Thread(target=_split_lat, args=(rows,), daemon=True).start()
 
     def fire(host):
         """发一个请求并短暂保持连接 —— 只为让 /connections 抓得到，不关心耗时"""
@@ -1924,7 +1939,7 @@ def split_test(force=False, with_lat=False):
         threading.Thread(target=fire, args=(host,), daemon=True).start()
 
     found = {}
-    t_end = time.time() + 13
+    t_end = time.time() + 9
     while time.time() < t_end and len(found) < len(SPLIT_TARGETS):
         try:
             code, body = ctrl_get(s, "/connections")
@@ -1944,30 +1959,21 @@ def split_test(force=False, with_lat=False):
         if len(found) < len(SPLIT_TARGETS):
             time.sleep(0.15)
 
-    rows = []
     for grp, host in SPLIT_TARGETS:
         c = found.get(grp) or {}
         chains = [str(x) for x in (c.get("chains") or [])]
         top = chains[-1] if chains else ""
-        rule = str(c.get("rule") or "")
-        payload = str(c.get("rulePayload") or "")
+        r = by[grp]
+        r["rule"] = str(c.get("rule") or "")
+        r["payload"] = str(c.get("rulePayload") or "")
+        r["chain"] = " > ".join(chains)
+        r["top"] = top
         if not c:
-            ok = -1
+            r["ok"] = -1
         elif grp == "直连":
-            ok = 1 if (top == "直连" or "direct" in top.lower()) else 0
+            r["ok"] = 1 if (top == "直连" or "direct" in top.lower()) else 0
         else:
-            ok = 1 if top == grp else 0
-        rows.append({"group": grp, "host": host, "rule": rule, "payload": payload,
-                     "chain": " > ".join(chains), "top": top, "ok": ok,
-                     "ms": 0})
-    d = {"rows": rows, "ts": int(now)}
-    with _NI_LOCK:
-        _SPLIT_CACHE["d"] = d
-        _SPLIT_CACHE["t"] = now
-    # 抓完连接立刻在后台并行补延迟（不阻塞返回），前端随后补拉即可
-    threading.Thread(target=_split_lat, args=(rows,), daemon=True).start()
-    if with_lat:
-        _wait_lat(rows, 5.0)
+            r["ok"] = 1 if top == grp else 0
     return d
 
 
@@ -3143,7 +3149,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.8.5</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.8.6</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -5978,7 +5984,7 @@ function stLat(n){
     ST=d.data; stRender();
     var rows=ST.rows||[], i, miss=0;
     for(i=0;i<rows.length;i++){ if(!rows[i].ms){ miss++; } }
-    if(miss && n < 3){ setTimeout(function(){ stLat(n+1); }, 1000); }
+    if(miss && n < 8){ setTimeout(function(){ stLat(n+1); }, 800); }
   }).catch(function(){});
 }
 function stRender(){
