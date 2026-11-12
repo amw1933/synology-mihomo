@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "1.9"
+APP_VERSION = "2.0"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -2017,7 +2017,8 @@ def sublinks_list():
         out.append({"token": k, "name": v.get("name") or k,
                     "urls": v.get("urls") or [], "regions": v.get("regions") or [],
                     "enable": bool(v.get("enable", True)), "created": v.get("created") or "",
-                    "kind": v.get("kind") or "clash"})
+                    "kind": v.get("kind") or "clash",
+                    "n_nodes": len(v.get("nodes") or []), "n_urls": len(v.get("urls") or [])})
     out.sort(key=lambda x: x.get("created") or "")
     return out
 
@@ -2063,8 +2064,9 @@ def sub_render(token, target="clash"):
     if not item.get("enable", True):
         return None, "这条订阅已被停用"
     urls = [str(u).strip() for u in (item.get("urls") or []) if str(u).strip().startswith("http")]
-    if not urls:
-        return None, "这条订阅还没有填来源链接"
+    nodes = [str(x).strip() for x in (item.get("nodes") or []) if str(x).strip()]
+    if not urls and not nodes:
+        return None, "这条订阅还没有填节点或来源链接"
     tgt = (target or "clash").strip().lower()
     if tgt in ("clash", "mihomo", "clashmeta", "clash-verge"):
         import copy as _copy
@@ -2072,7 +2074,7 @@ def sub_render(token, target="clash"):
         # 来源当成 proxy-providers（客户端自己拉，节点不进面板）
         s2["airports"] = [{"name": "sub%d" % (i + 1), "url": u, "interval": 86400}
                           for i, u in enumerate(urls)]
-        s2["nodes"] = []
+        s2["nodes"] = nodes            # ← 贴进来的节点直接内联成 proxies
         s2["tun_enable"] = False
         if item.get("regions"):
             s2["regions"] = [r for r in item["regions"] if r in REGION_MAP]
@@ -2082,7 +2084,7 @@ def sub_render(token, target="clash"):
         txt = re.sub(r"(?m)^secret:.*$", 'secret: ""', txt)
         return txt, ""
     if tgt in ("v2ray", "v2rayn", "v2rayng", "base64", "v2", "shadowrocket", "mihomo-base64"):
-        out = []
+        out = list(nodes)              # ← 直接贴的节点原样输出
         for u in urls:
             data, err = http_fetch(u, timeout=40)
             if not data:
@@ -2109,10 +2111,21 @@ def save_sublinks(s, d):
         tbl[tok]["enable"] = bool(d.get("enable"))
         sublinks_save(tbl)
         return {"ok": True, "msg": "已%s" % ("启用" if tbl[tok]["enable"] else "停用")}
-    urls = [str(x).strip() for x in (d.get("urls") or []) if str(x).strip()]
-    urls = [u for u in urls if u.startswith("http")]
-    if not urls:
-        return {"ok": False, "error": "至少要填一个 http 开头的订阅链接"}
+    urls, nodes, bad = [], [], []
+    for x in (d.get("urls") or []):
+        x = str(x).strip()
+        if not x:
+            continue
+        if x.startswith("http"):
+            urls.append(x)
+        elif "://" in x:
+            nodes.append(x)            # 节点分享链接
+        else:
+            bad.append(x[:40])
+    if bad:
+        return {"ok": False, "error": "有 %d 行看不懂（既不是订阅链接也不是节点）：%s" % (len(bad), bad[0])}
+    if not urls and not nodes:
+        return {"ok": False, "error": "至少要填一个节点分享链接（vmess:// 等）或订阅链接（http 开头）"}
     name = str(d.get("name") or "").strip() or "我的订阅"
     regions = [str(r) for r in (d.get("regions") or []) if str(r) in REGION_MAP]
     if not tok:
@@ -2120,11 +2133,12 @@ def save_sublinks(s, d):
         while tok in tbl:
             tok = sub_token()
         tbl[tok] = {"created": now()}
-    tbl[tok].update({"name": name, "urls": urls, "regions": regions,
+    tbl[tok].update({"name": name, "urls": urls, "nodes": nodes, "regions": regions,
                      "enable": bool(d.get("enable", True))})
     sublinks_save(tbl)
-    log("订阅：已保存「%s」(%d 个来源)" % (name, len(urls)))
-    return {"ok": True, "msg": "已保存订阅「%s」" % name, "token": tok}
+    log("订阅：已保存「%s」(%d 个节点 / %d 个来源)" % (name, len(nodes), len(urls)))
+    return {"ok": True, "msg": "已保存订阅「%s」（%d 个节点 / %d 个来源）" % (name, len(nodes), len(urls)),
+            "token": tok}
 
 
 def save_airports(s, d):
@@ -2365,7 +2379,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v1.9</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.0</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -2469,13 +2483,13 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 
  <section id=tab-sublinks hidden>
   <div class=card><h2>🔗 订阅生成 <span class=sp></span><span class=hint>把自己的订阅变成一个可分享的链接</span></h2>
-   <div class=hint>填名称 + 来源链接（可多行，多个会<b>合并</b>）→ 保存后得到两条链接：<b>Clash</b>（含你面板这套策略组）和 <b>V2Ray</b>（base64）。数据只存在你家 NAS（<code>/data/sublinks.json</code>），不经过任何第三方。</div>
+   <div class=hint>把<b>节点</b>（<code>vmess://</code> <code>vless://</code> <code>ss://</code> <code>trojan://</code> <code>hysteria2://</code> 等分享链接，每行一个，可多行）贴进下面 → 保存后就得到一条<b>属于你自己的订阅（机场）链接</b>：<b>Clash</b>（含你面板这套策略组）和 <b>V2Ray</b>（base64）。<br>也可以直接贴<b>订阅链接</b>（<code>http</code> 开头）→ 会当作上游机场合并进来。数据只存在你家 NAS（<code>/data/sublinks.json</code>），不经过任何第三方。</div>
    <div class=row style="margin-top:10px">
     <div style="flex:1 1 260px"><label>名称</label><input id=sb_name placeholder="例如 给朋友的香港节点"></div>
     <div style="flex:0 0 150px"><label>&nbsp;</label><button class=btn onclick="sbSave()">保存 / 新增</button></div>
    </div>
-   <div style="margin-top:10px"><label>订阅来源（每行一个 http 链接）</label>
-    <textarea id=sb_urls rows=3 style="width:100%;padding:9px 10px;border:1px solid #d0d5dd;border-radius:8px;font-size:13px" placeholder="https://机场A/api/v1/client/subscribe?token=xxx&#10;https://机场B/api/v1/client/subscribe?token=yyy"></textarea></div>
+   <div style="margin-top:10px"><label>节点 / 订阅来源（每行一条：分享链接或 http 订阅链接）</label>
+    <textarea id=sb_urls rows=3 style="width:100%;padding:9px 10px;border:1px solid #d0d5dd;border-radius:8px;font-size:13px" placeholder="vmess://eyJhZGQiOiIxLjIuMy40Ii4uLg==&#10;vless://uuid@example.com:443?type=ws#示例节点&#10;ss://YWVzLTI1Ni1nY206cGFzcw==@1.2.3.4:8388#香港01"></textarea></div>
    <div style="margin-top:10px"><label>只保留这些地区（不勾 = 全部；对 Clash 输出生效）</label>
     <div id=sb_rg style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px"></div></div>
   </div>
@@ -2802,7 +2816,7 @@ function sbRender(){
       +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
       +'<b>'+esc(it.name)+'</b>'
       +(it.enable?'<span class="pill" style="background:#12b76a">启用</span>':'<span class="pill" style="background:#98a2b3">已停用</span>')
-      +'<span class=hint>'+esc((it.urls||[]).length)+' 个来源'+((it.regions&&it.regions.length)?' · 地区：'+esc(it.regions.join('/')):'')+'</span>'
+      +'<span class=hint>'+esc(it.n_nodes||0)+' 个节点 · '+esc(it.n_urls||0)+' 个来源订阅'+((it.regions&&it.regions.length)?' · 地区：'+esc(it.regions.join('/')):'')+'</span>'
       +'<span class=sp></span>'
       +'<button class=btn2 data-act=toggle data-tok="'+esc(it.token)+'" data-en="'+(it.enable?1:0)+'">'+(it.enable?'停用':'启用')+'</button>'
       +'<button class="btn2 red" data-act=del data-tok="'+esc(it.token)+'">删除</button>'
@@ -2829,11 +2843,11 @@ function sbCopy(txt){
   } else { prompt('手动复制：',txt); }
 }
 function sbSave(){
-  var raw=((document.getElementById('sb_urls')||{}).value||'').split(String.fromCharCode(10)), urls=[], i, u;
-  for(i=0;i<raw.length;i++){ u=raw[i].trim(); if(u){ urls.push(u); } }
+  var raw=((document.getElementById('sb_urls')||{}).value||'').split(String.fromCharCode(10)), lines=[], i, u;
+  for(i=0;i<raw.length;i++){ u=raw[i].trim(); if(u){ lines.push(u); } }
   var regions=[];
   document.querySelectorAll('.sbrg').forEach(function(c){ if(c.checked){ regions.push(c.value); } });
-  apiPost('/api/sublinks',{action:'save',name:((document.getElementById('sb_name')||{}).value||''),urls:urls,regions:regions},1)
+  apiPost('/api/sublinks',{action:'save',name:((document.getElementById('sb_name')||{}).value||''),urls:lines,regions:regions},1)
    .then(function(d){
      if(d && d.ok){
        var ta=document.getElementById('sb_urls'); if(ta){ ta.value=''; }
