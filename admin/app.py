@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.9.2"
+APP_VERSION = "2.9.3"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -3175,7 +3175,7 @@ header::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;
  background:linear-gradient(90deg,#2563eb 0%,#7c3aed 55%,#06b6d4 100%)}
 .hw{position:relative;max-width:1140px;margin:0 auto;width:100%;display:flex;align-items:center;justify-content:center;gap:11px;flex-wrap:wrap}
 .hmid{display:flex;align-items:center;justify-content:center;gap:11px;flex-wrap:wrap}
-.hright{position:absolute;right:0;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:9px}
+.hright{display:flex;align-items:center;gap:9px;padding-left:13px;border-left:1px solid var(--bd)}
 nav .hw{gap:6px;justify-content:center}
 .nodes{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:99px;
  border:1px solid var(--hov2);background:var(--hov);color:var(--pri);font-family:inherit;
@@ -3363,7 +3363,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
 @media(max-width:720px){
  header{padding:10px 14px}
  .hw{gap:9px}
- .hright{position:static;transform:none;margin-left:auto}
+ .hright{padding-left:0;border-left:0}
  nav .hw{justify-content:flex-start}
  .nodes{padding:5px 10px;font-size:12px}
  header h1{font-size:15px}
@@ -3384,7 +3384,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
   <div class=hmid>
    <span class=mk><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.2v5.9c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6.2z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.6"/></svg></span>
    <h1>mihomo 网页管理台<small>群晖 NAS · 单端口旁路由</small></h1>
-   <span class="pill" id=ver>v2.9.2</span>
+   <span class="pill" id=ver>v2.9.3</span>
    <span class="pill gray2" id=hd>群晖 NAS</span>
    <button id=mhuiBtn class=nodes onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()">节点面板（内嵌）</button>
   </div>
