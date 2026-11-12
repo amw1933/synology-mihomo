@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.8.4"
+APP_VERSION = "2.8.5"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1857,21 +1857,40 @@ def _conn_match(want, host):
 SPLIT_LAT_PATHS = ("/favicon.ico", "/robots.txt", "/")
 
 
-def _split_lat(rows):
-    """给 rows 补延迟：暖连接 + HEAD，分别测 favicon / robots.txt / 首页，取最快的那个。
-    不同站点把静态资源放在不同 CDN 上，单一路径会误判（例如 Netflix 首页快、favicon 慢，
-    OneDrive 三样都慢），取最小值才最接近真实的网络往返。"""
-    def best_of(host):
-        best = 0
-        for p in SPLIT_LAT_PATHS:
-            ms = _lat_one("https://%s%s" % (host, p), 5.0, 2)
-            if ms and (best == 0 or ms < best):
-                best = ms
-        return best
+_SPLIT_LAT = {"running": False}
 
-    lat = _parallel([(r["group"], (lambda h=r["host"]: best_of(h))) for r in rows], 45)
-    for r in rows:
-        r["ms"] = int(lat.get(r["group"]) or 0)
+
+def _split_lat(rows):
+    """给 rows 补延迟：favicon / robots.txt / 首页三条路径**全部并发**测，每行取最快值。
+    并发是关键 —— 串行时慢站点（OneDrive 这种）会把整张表拖到十几秒。"""
+    if _SPLIT_LAT.get("running"):
+        return
+    _SPLIT_LAT["running"] = True
+    try:
+        jobs = []
+        for r in rows:
+            for p in SPLIT_LAT_PATHS:
+                jobs.append(((r["group"], p),
+                             (lambda h=r["host"], q=p: _lat_round("https://%s%s" % (h, q), 2.5, 1))))
+        res = _parallel(jobs, 9)
+        for r in rows:
+            vals = [res.get((r["group"], p)) or 0 for p in SPLIT_LAT_PATHS]
+            vals = [v for v in vals if v]
+            if vals:
+                r["ms"] = int(min(vals))
+    finally:
+        _SPLIT_LAT["running"] = False
+
+
+def _wait_lat(rows, secs=5.0):
+    """等后台延迟任务补完（有限等待，等不到就先把已有值返回）"""
+    t0 = time.time()
+    while time.time() - t0 < secs:
+        if not any(not r.get("ms") for r in rows):
+            return
+        if not _SPLIT_LAT.get("running"):
+            return
+        time.sleep(0.15)
 
 
 def split_test(force=False, with_lat=False):
@@ -1883,8 +1902,10 @@ def split_test(force=False, with_lat=False):
         cached = _SPLIT_CACHE["d"]
         age = now - _SPLIT_CACHE["t"]
     if cached and not force and (age < 60 or with_lat):
-        if with_lat and any(not r.get("ms") for r in cached["rows"]):
-            _split_lat(cached["rows"])
+        if with_lat:
+            if any(not r.get("ms") for r in cached["rows"]):
+                _split_lat(cached["rows"])
+            _wait_lat(cached["rows"], 5.0)
         return cached
     s = load_settings()
 
@@ -1943,8 +1964,10 @@ def split_test(force=False, with_lat=False):
     with _NI_LOCK:
         _SPLIT_CACHE["d"] = d
         _SPLIT_CACHE["t"] = now
+    # 抓完连接立刻在后台并行补延迟（不阻塞返回），前端随后补拉即可
+    threading.Thread(target=_split_lat, args=(rows,), daemon=True).start()
     if with_lat:
-        _split_lat(rows)
+        _wait_lat(rows, 5.0)
     return d
 
 
@@ -3120,7 +3143,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.8.4</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.8.5</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -5946,10 +5969,17 @@ function stLoad(force){
   if(b){ b.innerHTML='<tr><td colspan=6>测试中…（每个业务组发一个请求，一般 2~4 秒出表）</td></tr>'; }
   fetch('/api/splittest'+(force?'?force=1':'')).then(function(r){return r.json()}).then(function(d){
     ST=d.data||{}; stRender();
-    fetch('/api/splittest?lat=1').then(function(r){return r.json()}).then(function(d2){
-      if(d2 && d2.data){ ST=d2.data; stRender(); }
-    }).catch(function(){});
+    stLat(0);
   }).catch(function(){ if(b){ b.innerHTML='<tr><td colspan=6>测试失败</td></tr>'; } });
+}
+function stLat(n){
+  fetch('/api/splittest?lat=1').then(function(r){return r.json()}).then(function(d){
+    if(!d || !d.data){ return; }
+    ST=d.data; stRender();
+    var rows=ST.rows||[], i, miss=0;
+    for(i=0;i<rows.length;i++){ if(!rows[i].ms){ miss++; } }
+    if(miss && n < 3){ setTimeout(function(){ stLat(n+1); }, 1000); }
+  }).catch(function(){});
 }
 function stRender(){
   var b=document.getElementById('st');
