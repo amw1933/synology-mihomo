@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.0"
+APP_VERSION = "2.1"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -463,6 +463,8 @@ def gen_config(s):
     a("  fake-ip-filter:")
     a('    - "+.msftconnecttest.com"')
     a('    - "+.msftncsi.com"')
+    for _d in [x.strip().lstrip("*.") for x in str(s.get("direct_domains") or "").split(",") if x.strip()]:
+        a('    - "+.%s"' % _d)
     a("")
 
     # ---- 机场 = 独立 proxy-providers（用户明确要的设计）
@@ -611,8 +613,11 @@ def gen_config(s):
         "GEOIP,private,直连,no-resolve",
     ]
     # 额外直连域名（逗号分隔）：旁路由模式下让订阅/面板/自建服务走直连，别绕代理
-    for _d in [x.strip() for x in str(s.get("direct_domains") or "").split(",") if x.strip()]:
-        rules.append("DOMAIN-SUFFIX,%s,DIRECT" % _d)
+    # 注意：这些域名同时会加进 dns.fake-ip-filter，DNS 返回真实 IP，直连才真的通
+    for _d in [x.strip().lstrip("*.") for x in str(s.get("direct_domains") or "").split(",") if x.strip()]:
+        _r = "DOMAIN-SUFFIX,%s,DIRECT" % _d
+        if _r not in rules:
+            rules.append(_r)
     if s.get("ruleset_enabled", True):
         rt = s.get("rule_targets") or {}
 
@@ -2379,7 +2384,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.0</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.1</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -2450,6 +2455,9 @@ th{color:#475467;font-weight:600;font-size:12.5px}
     <div><label>管理台端口（对外唯一）</label><input id=t_ad></div>
    </div>
    <div class=row><div><label>管理台密码（= 面板密钥）</label><input id=t_sc></div></div>
+   <div class=row><div><label>直连域名（逗号分隔，填你自己的域名）</label><input id=t_dd placeholder="freet.cc"></div>
+    <div style="align-self:flex-end"><button class=btn2 onclick="ddSave()">保存</button></div></div>
+   <div class=hint>填你<b>自己的域名</b>（如 <code>freet.cc</code>）：访问面板/订阅/自建服务时<b>不走代理</b>，并且 DNS <b>返回真实 IP、不会被 fake-ip 拦住</b>（这样电脑上也能正常打开自己的域名 ✓）。改完点上面「保存」✓，再点「立即更新配置」生效 ✓。</div>
    <div style="margin-top:12px"><button class=btn onclick="tlSave()">保存</button>
     <button class="btn gray" onclick="applyAll()">应用并重建容器</button>
     <span class=hint style="margin-left:8px">保存密码</span></div>
@@ -2726,6 +2734,7 @@ function loadTools(){
     $('#t_pp').value=s.proxy_port||'7890';$('#t_pa').value=s.panel_port||'9091';
     $('#t_ad').value=s.admin_port||'9090';$('#t_sc').value=s.secret||'';
     $('#t_sch').checked=(s.schedule_enabled!==false);$('#t_st').value=s.schedule_time||'04:00';
+    $('#t_dd').value=s.direct_domains||'';
   });
   loadBackups();
 }
@@ -2733,6 +2742,14 @@ function tlSave(){
   apiPost('/api/settings',{proxy_ip:$('#t_ip').value.trim(),admin_bind:$('#t_ab').value.trim(),
     proxy_port:$('#t_pp').value.trim(),panel_port:$('#t_pa').value.trim(),admin_port:$('#t_ad').value.trim(),
     secret:$('#t_sc').value, schedule_enabled:$('#t_sch').checked, schedule_time:$('#t_st').value.trim()},0);
+}
+function ddSave(){
+  var el=$('#t_dd'), parts=(el.value||'').replace(/;/g,',').split(','), out=[];
+  for(var i=0;i<parts.length;i++){ var x=parts[i].trim(); if(x){ out.push(x); } }
+  el.value=out.join(',');
+  apiPost('/api/settings',{direct_domains:el.value},1).then(function(d){
+    if(d&&d.ok){ upModal('✅ 已保存直连域名<div style="margin-top:8px" class=hint>点「立即更新配置」后生效：DNS 返回真实 IP + 域名走直连</div><div style="margin-top:12px"><button class=btn onclick="upClose()">知道了</button></div>'); }
+  });
 }
 function ipDetect(){ fetch('/api/ip').then(r=>r.json()).then(function(d){ if(d.ip){$('#t_ip').value=d.ip;$('#t_ab').value=d.ip;} }); }
 function applyAll(){ apiPost('/api/apply',{},0); }
