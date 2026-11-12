@@ -1197,19 +1197,31 @@ def sync_scripts():
 
 
 def _self_restart():
-    """重启管理台容器（改完自己的程序文件后生效）"""
-    time.sleep(3)
+    """重启管理台（改完自己的程序文件后生效）
+
+    注意：在容器内部调用 `docker restart` 会被自己的 stop 阶段杀掉，
+    结果容器停在 Exited 不回来（踩过这个坑）。所以这里优先"退出进程"，
+    由 Docker 的 restart 策略(unless-stopped / always)自动拉起；
+    只有当策略是 no 时才退而求其次去调 docker restart。
+    """
+    time.sleep(2)
+    policy = ""
     try:
-        rc, out, err = run_cmd([DOCKER, "restart", APP_NAME], timeout=90)
+        rc, out, err = run_cmd([DOCKER, "inspect", APP_NAME,
+                                "--format", "{{.HostConfig.RestartPolicy.Name}}"], timeout=30)
         if rc == 0:
-            return
-        log("重启管理台失败：%s" % ((err or out or "").strip()[:200]))
+            policy = (out or "").strip()
+    except Exception:
+        policy = ""
+    log("重启管理台：restart 策略=%s" % (policy or "unknown"))
+    if policy in ("unless-stopped", "always"):
+        os._exit(1)          # 交给 Docker 自动重启（干净可靠）
+    try:
+        run_cmd([DOCKER, "restart", APP_NAME], timeout=90)
     except Exception as e:  # noqa: BLE001
         log("重启管理台异常：%r" % (e,))
-    try:
-        os._exit(1)          # 兜底：交给 restart 策略拉起
-    except Exception:
-        pass
+    time.sleep(3)
+    os._exit(1)
 
 
 def self_update(apply=True):
