@@ -1313,7 +1313,7 @@ def update_check_once():
     """检查仓库有没有新版：只写「有更新」标记，不下载、不安装（安装由手动按钮触发）"""
     s = load_settings()
     if not s.get("auto_update_panel", True):
-        return {"ok": True, "enabled": False}
+        return {"ok": True, "enabled": False, "msg": "自动检查更新已关闭"}
     sha = repo_latest_sha()
     if not sha:
         return {"ok": False, "error": "读取仓库版本失败"}
@@ -1328,11 +1328,12 @@ def update_check_once():
         s["update_available"] = sha
         save_settings(s)
         log("更新检查：发现新版 %s（本地记录 %s）—— 页面会提示，点「更新管理台程序」安装" % (sha[:8], last[:8]))
-        return {"ok": True, "available": True, "sha": sha[:8]}
+        return {"ok": True, "available": True, "sha": sha[:8],
+                "msg": "发现新版 %s —— 点「更新管理台程序」安装" % sha[:8]}
     if s.get("update_available"):
         s["update_available"] = ""
         save_settings(s)
-    return {"ok": True, "available": False, "msg": "已是最新"}
+    return {"ok": True, "available": False, "msg": "已是最新（%s）" % last[:8]}
 
 
 def auto_update_loop():
@@ -2548,17 +2549,21 @@ fetch('/api/settings').then(r=>r.json()).then(function(d){
   }
 });
 function chkUpd(){
-  apiPost('/api/update-check',{},1).then(function(d){
-    var tip=document.getElementById('upTip');
-    if(!tip||!d){return}
-    if(d.available){
-      tip.innerHTML='<b style="color:#d92d20">🔔 发现新版（'+String(d.sha||'').slice(0,8)+'）—— 点「更新管理台程序」安装</b>';
-    }else if(d.ok){
-      tip.innerHTML='<b style="color:#12b76a">✓ 已是最新</b>';
-    }else{
-      tip.innerHTML='<b style="color:#d92d20">检查失败：'+esc(d.error||'')+'</b>';
-    }
-  });
+  var tip=document.getElementById('upTip');
+  if(tip){ tip.innerHTML='<span style="color:#98a2b3">正在检查…</span>'; }
+  fetch('/api/update-check',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+   .then(function(r){ return r.json(); })
+   .then(function(d){
+     if(!tip){ return; }
+     if(d && d.available){
+       tip.innerHTML='<b style="color:#d92d20">🔔 发现新版（'+String(d.sha||'').slice(0,8)+'）—— 点「更新管理台程序」安装</b>';
+     }else if(d && d.ok){
+       tip.innerHTML='<b style="color:#12b76a">✓ '+esc(d.msg||'已是最新')+'</b>';
+     }else{
+       tip.innerHTML='<b style="color:#d92d20">检查失败：'+esc((d&&d.error)||'')+'</b>';
+     }
+   })
+   .catch(function(e){ if(tip){ tip.innerHTML='<b style="color:#d92d20">检查失败：'+esc(e)+'</b>'; } });
 }
 function loadLogs(){ fetch('/api/logs?n=200').then(r=>r.json()).then(function(d){$('#logs').textContent=d.log||''}); }
 loadStatus();
