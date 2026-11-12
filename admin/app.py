@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.6.2"
+APP_VERSION = "2.7"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1648,6 +1648,46 @@ def _dec(raw):
     return raw.decode("utf-8", "replace")
 
 
+def _lat_one(url, timeout=6.0, samples=3):
+    """暖连接测延迟：先在一条连接上预热一次，再连续计时取最小值。
+    这样排除 DNS / TCP / TLS 握手（浏览器测的就是这个数），跨境长连接（YouTube 等）不再虚高。
+    """
+    try:
+        u = urllib.parse.urlsplit(url)
+        host = u.hostname or ""
+        path = (u.path or "/") + (("?" + u.query) if u.query else "")
+        port = u.port or (443 if u.scheme == "https" else 80)
+    except Exception:
+        return 0
+    if not host:
+        return 0
+    best = 0
+    conn = None
+    try:
+        if u.scheme == "https":
+            conn = http.client.HTTPSConnection(host, port, timeout=timeout)
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=timeout)
+        hdr = {"User-Agent": NET_UA, "Accept": "*/*", "Connection": "keep-alive"}
+        for i in range(samples + 1):
+            t0 = time.time()
+            conn.request("GET", path, headers=hdr)
+            r = conn.getresponse()
+            r.read()                      # 读干净，连接才能复用
+            ms = int((time.time() - t0) * 1000)
+            if i >= 1 and ms > 0:
+                best = ms if best == 0 else min(best, ms)
+    except Exception:
+        pass
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+    return best
+
+
 def _ipv4(text):
     for m in IPV4_RE.finditer(text or ""):
         ip = m.group(1)
@@ -1747,7 +1787,7 @@ def latency_all(force=False):
     with _NI_LOCK:
         if not force and _LAT_CACHE["d"] and now - _LAT_CACHE["t"] < 60:
             return _LAT_CACHE["d"]
-    res = _parallel([(i, (lambda u=u: _http_probe(u, 6.0)[0])) for i, (n, r, u) in enumerate(LAT_SITES)], 14)
+    res = _parallel([(i, (lambda u=u: _lat_one(u, 6.0, 3))) for i, (n, r, u) in enumerate(LAT_SITES)], 26)
     items = []
     for i, (n, r, u) in enumerate(LAT_SITES):
         items.append({"name": n, "region": r, "ms": int(res.get(i) or 0)})
@@ -3018,7 +3058,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.6.2</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.7</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -3035,10 +3075,11 @@ th{color:#475467;font-weight:600;font-size:12.5px}
    <div class=kv id=kv></div>
    <div id=kupd></div></div>
   <div class=card><h2>🌍 当前网络信息 <span class=sp></span>
-    <button class=btn2 onclick="niLoad(1)">刷新</button></h2>
+    <button class=btn2 onclick="niLoad(1)">刷新</button>
+    <label class=chk style="float:none;display:inline-block;margin-left:10px;font-weight:400;font-size:12px"><input type=checkbox id=niauto checked onchange="niAutoToggle()"> 自动刷新</label></h2>
    <div id=ni></div>
    <div id=nil></div>
-   <div class=hint>国内测试走<b>直连</b>，国外 / 墙外走<b>代理</b>（都是面板所在群晖的真实出口）；延迟为群晖经 mihomo 实测；点 🔍 看该 IP 的归属地与地图。</div></div>
+   <div class=hint>国内测试走<b>直连</b>，国外 / 墙外走<b>代理</b>（都是面板所在群晖的真实出口）；延迟为群晖经 mihomo 实测（同一条连接预热后取最小值，所以比首次冷连接低）；<span id=nit></span></div></div>
   <div class=card><h2>🩺 健康自检（7 项）</h2><table><tbody id=hc></tbody></table>
    <div class=hint>健康自检会真实尝试：容器状态、配置校验、经代理出网、面板接口、磁盘、程序文件、定时任务。</div></div>
   <div class=card><h2>📦 代理提供者（机场）</h2><table>
@@ -5834,6 +5875,8 @@ function nilRender(items){
   }
   h+='</div>';
   l.innerHTML=h;
+  var tn=document.getElementById('nit');
+  if(tn){ tn.textContent=' · 更新于 '+new Date().toLocaleTimeString(); }
 }
 function stLoad(force){
   var b=document.getElementById('st'), hh=document.getElementById('sth');
@@ -5952,6 +5995,25 @@ function ipMap(lat,lon,tip){
   L.marker([lat,lon]).addTo(IPMAP).bindPopup(tip).openPopup();
   setTimeout(function(){ try{ IPMAP.invalidateSize(); }catch(e){} },150);
 }
+
+var NI_AUTO=1,NI_BUSY=0,NI_LAST=0;
+function niVisible(){ var s=document.getElementById('tab-status'); return !!s && !s.hidden; }
+function niAutoToggle(){ var c=document.getElementById('niauto'); NI_AUTO = c && c.checked ? 1 : 0; }
+function niLatTick(){
+  if(!NI_AUTO || document.hidden || !niVisible() || !NI || NI_BUSY){ return; }
+  NI_BUSY=1;
+  fetch('/api/latency?force=1').then(function(r){return r.json()}).then(function(d){
+    nilRender(d.items||[]); NI_BUSY=0;
+  }).catch(function(){ NI_BUSY=0; });
+}
+function niNetTick(){
+  if(!NI_AUTO || document.hidden || !niVisible() || !NI){ return; }
+  fetch('/api/netinfo').then(function(r){return r.json()}).then(function(d){
+    if(d&&d.data){ NI=d.data; niRender(); }
+  }).catch(function(){});
+}
+setInterval(niLatTick, 6000);
+setInterval(niNetTick, 60000);
 setTimeout(function(){ if(!NI){ niLoad(0); } },900);
 function ipDetect(){ fetch('/api/ip').then(r=>r.json()).then(function(d){ if(d.ip){$('#t_ip').value=d.ip;$('#t_ab').value=d.ip;} }); }
 function applyAll(){ apiPost('/api/apply',{},0); }
