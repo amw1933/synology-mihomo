@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.9.1"
+APP_VERSION = "2.9.2"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -3173,8 +3173,14 @@ header{position:relative;display:block;padding:12px 20px 11px;
 html.dark header{background:linear-gradient(180deg,rgba(17,26,44,.93),rgba(17,26,44,.80))}
 header::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;
  background:linear-gradient(90deg,#2563eb 0%,#7c3aed 55%,#06b6d4 100%)}
-.hw{max-width:1140px;margin:0 auto;width:100%;display:flex;align-items:center;gap:11px;flex-wrap:wrap}
-nav .hw{gap:6px}
+.hw{position:relative;max-width:1140px;margin:0 auto;width:100%;display:flex;align-items:center;justify-content:center;gap:11px;flex-wrap:wrap}
+.hmid{display:flex;align-items:center;justify-content:center;gap:11px;flex-wrap:wrap}
+.hright{position:absolute;right:0;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:9px}
+nav .hw{gap:6px;justify-content:center}
+.nodes{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:99px;
+ border:1px solid var(--hov2);background:var(--hov);color:var(--pri);font-family:inherit;
+ font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:.16s}
+.nodes:hover{background:var(--hov2);transform:translateY(-1px)}
 .brand{display:flex;align-items:center;gap:11px;min-width:0}
 .mk{width:36px;height:36px;flex:0 0 auto;border-radius:11px;display:flex;align-items:center;justify-content:center;
  background:linear-gradient(135deg,#2563eb,#7c3aed);box-shadow:0 8px 20px -8px rgba(37,99,235,.75)}
@@ -3344,14 +3350,6 @@ html.dark .g2{color:#4ade80}html.dark .y2{color:#fbbf24}html.dark .r2{color:#f87
 .ipmi td:first-child{color:var(--t3);width:106px}
 .ok2{color:var(--ok);font-weight:700}.no2{color:var(--t3)}
 
-/* ===================== 悬浮「节点面板」按钮 ===================== */
-#mhuiBtn{right:max(18px,calc((100vw - 1180px)/2))!important;bottom:20px!important;
- background:linear-gradient(135deg,#2563eb,#6d28d9)!important;color:#fff!important;border:0!important;
- border-radius:99px!important;padding:11px 18px!important;font-size:13.5px!important;font-weight:600!important;
- font-family:inherit!important;cursor:pointer!important;
- box-shadow:0 10px 26px -12px rgba(37,99,235,.95)!important;transition:transform .16s,filter .16s}
-#mhuiBtn:hover{transform:translateY(-1px);filter:brightness(1.07)}
-
 /* ===================== 深色兼容：覆盖 JS 写死的内联浅色 ===================== */
 html.dark [style*="#e6ecf5"]{border-color:var(--bd2)!important}
 html.dark [style*="color:#d92d20"]{color:var(--bad)!important}
@@ -3365,6 +3363,9 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
 @media(max-width:720px){
  header{padding:10px 14px}
  .hw{gap:9px}
+ .hright{position:static;transform:none;margin-left:auto}
+ nav .hw{justify-content:flex-start}
+ .nodes{padding:5px 10px;font-size:12px}
  header h1{font-size:15px}
  header h1 small{display:none}
  nav{padding:7px 14px 9px}
@@ -3380,15 +3381,17 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
 <div class=top>
 <header>
  <div class=hw>
- <div class=brand>
-  <span class=mk><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.2v5.9c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6.2z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.6"/></svg></span>
-  <h1>mihomo 网页管理台<small>群晖 NAS · 单端口旁路由</small></h1>
- </div>
- <span class="pill" id=ver>v2.9.1</span>
- <span class="pill gray2" id=hd>群晖 NAS</span>
- <span class=sp></span>
- <button class=iconbtn id=thm onclick="thmTgl()" title="切换深色 / 浅色">🌙</button>
- <a class="btn gray" href="/logout">退出登录</a>
+  <div class=hmid>
+   <span class=mk><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.2v5.9c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6.2z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.6"/></svg></span>
+   <h1>mihomo 网页管理台<small>群晖 NAS · 单端口旁路由</small></h1>
+   <span class="pill" id=ver>v2.9.2</span>
+   <span class="pill gray2" id=hd>群晖 NAS</span>
+   <button id=mhuiBtn class=nodes onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()">节点面板（内嵌）</button>
+  </div>
+  <div class=hright>
+   <button class=iconbtn id=thm onclick="thmTgl()" title="切换深色 / 浅色">🌙</button>
+   <a class="btn gray" href="/logout">退出登录</a>
+  </div>
  </div>
 </header>
 <nav>
@@ -6532,7 +6535,7 @@ function sbToggle(t,e){ apiPost('/api/sublinks',{action:'toggle',token:t,enable:
 
 loadStatus();
 </script>
-<button id=mhuiBtn onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()" style="position:fixed;right:18px;bottom:18px;z-index:9999;padding:10px 16px;border:0;border-radius:22px;background:#2f81f7;color:#fff;font-size:14px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.35)">节点面板（内嵌）</button>
+
 <div id=mhui style="display:none;position:fixed;inset:0;z-index:9998;background:#0d1117">
  <div style="height:38px;line-height:38px;padding:0 12px;background:#161b22;color:#c9d1d9;font-size:13px">
    节点面板 metacubexd —— 地址已自动带出（<b>http://当前地址/clash</b>），密钥可留空（管理台登录过就自动带上）
