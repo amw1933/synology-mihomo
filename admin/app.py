@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.4"
+APP_VERSION = "2.5"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -380,6 +380,15 @@ RULE_PROVIDERS = [
 ]
 
 
+def ruleset_defaults():
+    """默认规则集清单（key/默认地址/行为），界面用来显示备注与一键恢复"""
+    out = []
+    for k, fn in RULE_PROVIDERS:
+        out.append({"key": k, "url": MRS % fn, "behavior": "domain"})
+    out.append({"key": "proxylite", "url": PROXYLITE, "behavior": "classical"})
+    return out
+
+
 def manual_nodes(s):
     """settings.nodes（分享链接原文）-> mihomo 节点 dict 列表"""
     if not s.get("nodes") or sub_convert is None:
@@ -602,9 +611,18 @@ def gen_config(s):
         a("  class: &class {type: http, interval: 86400, behavior: classical, format: text}")
         a("")
         a("rule-providers:")
+        _urls = s.get("ruleset_urls") or {}
         for k, fn in RULE_PROVIDERS:
-            a('  %s: {<<: *domain, url: "%s"}' % (k, MRS % fn))
-        a('  proxylite: {<<: *class, url: "%s"}' % PROXYLITE)
+            a('  %s: {<<: *domain, url: "%s"}' % (k, str(_urls.get(k) or (MRS % fn)).strip()))
+        a('  proxylite: {<<: *class, url: "%s"}' % str(_urls.get("proxylite") or PROXYLITE).strip())
+        for _c in (s.get("custom_rulesets") or []):
+            if not isinstance(_c, dict):
+                continue
+            _ck, _cu = str(_c.get("key") or "").strip(), str(_c.get("url") or "").strip()
+            if not _ck or not _cu:
+                continue
+            _cb = str(_c.get("behavior") or "domain").strip().lower()
+            a('  %s: {<<: *%s, url: "%s"}' % (_ck, "class" if _cb.startswith("class") else "domain", _cu))
         a("")
     a("rules:")
     rules = [
@@ -643,6 +661,12 @@ def gen_config(s):
         rules.append("RULE-SET,proxylite,%s" % _tgt(rt.get("proxylite"), DEFAULT_PROXY))
         for key, tgt in BIZ_RULES:
             rules.append("RULE-SET,%s,%s" % (key, _tgt(rt.get(key), tgt)))
+        for _c in (s.get("custom_rulesets") or []):
+            if not isinstance(_c, dict):
+                continue
+            _ck, _cu = str(_c.get("key") or "").strip(), str(_c.get("url") or "").strip()
+            if _ck and _cu:
+                rules.append("RULE-SET,%s,%s" % (_ck, _tgt(_c.get("target"), "漏网之鱼")))
     rules += ["GEOSITE,cn,直连", "GEOIP,CN,直连", "MATCH,漏网之鱼"]
     for r in rules:
         a("  - %s" % r)
@@ -1896,7 +1920,8 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/status":
                 return self._json(api_status())
             if p == "/api/settings":
-                return self._json({"ok": True, "settings": load_settings()})
+                return self._json({"ok": True, "settings": load_settings(),
+                                   "ruleset_defaults": ruleset_defaults()})
             if p == "/api/logs":
                 return self._json({"ok": True, "log": tail_log(args.get("n", "120"))})
             if p == "/api/version":
@@ -2480,6 +2505,30 @@ def save_groups(s, d):
             if len(out) >= 200:
                 break
         s["custom_routes"] = out
+    if isinstance(d.get("ruleset_urls"), dict):
+        out = {}
+        for k, v in d["ruleset_urls"].items():
+            k, v = str(k or "").strip()[:40], str(v or "").strip()[:400]
+            if k and v.startswith(("http://", "https://")):
+                out[k] = v
+        s["ruleset_urls"] = out
+    if isinstance(d.get("custom_rulesets"), list):
+        out = []
+        for it in d["custom_rulesets"]:
+            if not isinstance(it, dict):
+                continue
+            k = re.sub(r"[^A-Za-z0-9_.-]", "", str(it.get("key") or ""))[:40]
+            u = str(it.get("url") or "").strip()[:400]
+            if not k or not u.startswith(("http://", "https://")):
+                continue
+            bh = "classical" if str(it.get("behavior") or "").lower().startswith("class") else "domain"
+            item = {"key": k, "url": u, "behavior": bh,
+                    "target": str(it.get("target") or "漏网之鱼").strip()[:40] or "漏网之鱼"}
+            if item not in out:
+                out.append(item)
+            if len(out) >= 30:
+                break
+        s["custom_rulesets"] = out
     if isinstance(d.get("rule_targets"), dict):
         s["rule_targets"] = {str(k): str(v) for k, v in d["rule_targets"].items()}
     if "ruleset_enabled" in d:
@@ -2630,7 +2679,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.4</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.5</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -2692,6 +2741,10 @@ th{color:#475467;font-weight:600;font-size:12.5px}
    <div class=hint>这条规则排在规则集<b>前面</b>，所以优先级最高：选了直连就一定直连，选了某个组就一定走那个组。</div></div>
 
   <div class=card><h2>🧭 规则集分流</h2>
+   <div id=rs></div>
+   <div style="margin-top:8px"><button class=btn2 onclick="rsAdd()">➕ 添加自定义规则集</button>
+    <button class=btn2 onclick="rsReset()">全部恢复默认地址</button></div>
+   <div class=hint style="margin-top:6px">默认地址来自 <code>MetaCubeX/meta-rules-dat</code>：<code>https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/&lt;名字&gt;.mrs</code>（AI=category-ai-!cn、GitHub=github、YouTube=youtube…）；<code>proxylite</code> 来自 <code>https://cdn.jsdelivr.net/gh/qichiyuhub/rule@main/rules/proxy.list</code>。想换镜像或换成自己的规则集，直接把地址改掉即可（留空＝用默认）；填错了点「全部恢复默认地址」。</div>
    <label class=chk><input type=checkbox id=rs_en onchange=rsToggle()> 启用规则集分流（七尺宇 qichiyuhub/rule + MetaCubeX meta-rules-dat）</label>
    <div class=hint>关闭后只保留基础规则（国内直连、其余走漏网之鱼）。</div></div>
   <div style="margin-top:8px"><button class=btn onclick="grSave()">保存策略并生成配置</button></div>
@@ -5194,6 +5247,10 @@ function loadGroups(){
       window.MEM=mem;
       CR=(s.custom_routes||[]).map(function(x){return {domain:x.domain||'',target:x.target||'漏网之鱼'};});
       crRender();
+      RSDEF=d.ruleset_defaults||[];
+      RSU=Object.assign({},s.ruleset_urls||{});
+      RSC=(s.custom_rulesets||[]).map(function(x){return {key:x.key||'',url:x.url||'',behavior:x.behavior||'domain',target:x.target||'漏网之鱼'};});
+      rsRender();
       // 地区勾选
       var all=['香港','日本','新加坡','美国','台湾','韩国','英国','德国','法国','荷兰','意大利','西班牙','欧洲'];var h='';
       all.forEach(function(r){h+='<label class=chk><input type=checkbox class=rgc value="'+esc(r)+'"'+
@@ -5284,7 +5341,7 @@ function grSave(){
   }
   var regs=[];document.querySelectorAll('.rgc').forEach(function(c){if(c.checked)regs.push(c.value)});
   var g={};document.querySelectorAll('.bgs').forEach(function(sel){g[sel.dataset.n]=sel.value});
-  apiPost('/api/groups',{regions:regs,groups:g,ruleset_enabled:$('#rs_en').checked,custom_groups:cg,custom_routes:CR},0);
+  apiPost('/api/groups',{regions:regs,groups:g,ruleset_enabled:$('#rs_en').checked,custom_groups:cg,custom_routes:CR,ruleset_urls:RSU,custom_rulesets:RSC},0);
 }
 function loadTools(){
   fetch('/api/settings').then(r=>r.json()).then(function(d){
@@ -5337,6 +5394,48 @@ function crRender(){
 }
 function crAdd(){ CR.push({domain:'',target:'漏网之鱼'}); crRender(); }
 function crDel(i){ CR.splice(i,1); crRender(); }
+var RSDEF=[],RSU={},RSC=[];
+function rsRender(){
+  var box=document.getElementById('rs');
+  if(!box){ return; }
+  var mem=(window.MEM||[]).filter(function(x){ return x && x!=='直连'; });
+  var h='', i, j, it, k;
+  h+='<div style="font-size:13px;font-weight:600;margin:12px 0 6px">默认规则集的地址（留空＝用默认，地址可直接改）</div>';
+  for(i=0;i<RSDEF.length;i++){
+    it=RSDEF[i];
+    h+='<div class=row style="margin-bottom:6px">'
+      +'<div style="flex:0 0 140px;align-self:center"><code>'+esc(it.key)+'</code></div>'
+      +'<div style="flex:1 1 300px"><input class=rs_u data-k="'+esc(it.key)+'" value="'+esc(RSU[it.key]||'')+'" placeholder="'+esc(it.url)+'"></div>'
+      +'</div>';
+  }
+  h+='<div style="font-size:13px;font-weight:600;margin:16px 0 6px">自定义规则集（在默认规则之后、漏网之鱼之前匹配）</div>';
+  if(!RSC.length){ h+='<div class=hint>还没有自定义规则集。</div>'; }
+  for(i=0;i<RSC.length;i++){
+    it=RSC[i]||{};
+    h+='<div class=row style="margin-bottom:6px">'
+      +'<div style="flex:0 0 150px"><input class=rc_k value="'+esc(it.key||'')+'" placeholder="名称，如 myrule"></div>'
+      +'<div style="flex:1 1 260px"><input class=rc_u value="'+esc(it.url||'')+'" placeholder="https://example.com/my.mrs"></div>'
+      +'<div style="flex:0 0 150px"><select class=rc_t>'
+      +'<option value="漏网之鱼"'+((!it.target||it.target==='漏网之鱼')?' selected':'')+'>漏网之鱼</option>'
+      +'<option value="直连"'+((it.target==='直连')?' selected':'')+'>直连</option>';
+    for(j=0;j<mem.length;j++){
+      h+='<option value="'+esc(mem[j])+'"'+((it.target===mem[j])?' selected':'')+'>'+esc(mem[j])+'</option>';
+    }
+    h+='</select></div>'
+      +'<div style="flex:0 0 auto;align-self:flex-end"><button class="btn2 red" onclick="rsDel('+i+')">删除</button></div>'
+      +'</div>';
+  }
+  box.innerHTML=h;
+  var us=box.querySelectorAll('.rs_u'), ks=box.querySelectorAll('.rc_k'),
+      cu=box.querySelectorAll('.rc_u'), ct=box.querySelectorAll('.rc_t');
+  for(k=0;k<us.length;k++){ (function(k){ us[k].oninput=function(){ RSU[us[k].getAttribute('data-k')]=us[k].value.trim(); }; })(k); }
+  for(k=0;k<ks.length;k++){ (function(k){ ks[k].oninput=function(){ if(RSC[k]){RSC[k].key=ks[k].value.trim();} }; })(k); }
+  for(k=0;k<cu.length;k++){ (function(k){ cu[k].oninput=function(){ if(RSC[k]){RSC[k].url=cu[k].value.trim();} }; })(k); }
+  for(k=0;k<ct.length;k++){ (function(k){ ct[k].onchange=function(){ if(RSC[k]){RSC[k].target=ct[k].value;} }; })(k); }
+}
+function rsAdd(){ RSC.push({key:'',url:'',behavior:'domain',target:'漏网之鱼'}); rsRender(); }
+function rsDel(i){ RSC.splice(i,1); rsRender(); }
+function rsReset(){ RSU={}; rsRender(); }
 function ipDetect(){ fetch('/api/ip').then(r=>r.json()).then(function(d){ if(d.ip){$('#t_ip').value=d.ip;$('#t_ab').value=d.ip;} }); }
 function applyAll(){ apiPost('/api/apply',{},0); }
 function kdRestart(){ if(!confirm('重启内核容器 mihomo？')) return; apiPost('/api/kernel-restart',{},0); }
