@@ -103,9 +103,16 @@ REGION_DEFS = [
     ("香港", "香港", r"(?i)^(HK|香港|Hong)", "hongkong"),
     ("日本", "日本", r"(?i)^(JP|日本|Japan|东京|大阪)", "japan"),
     ("新加坡", "狮城", r"(?i)^(SG|新加坡|狮城|Singapore)", "singapore"),
-    ("美国", "美国", r"(?i)^(US|美国|United)", "unitedstates"),
+    ("美国", "美国", r"(?i)^(US|美国|United|洛杉矶|圣何塞|西雅图)", "usa"),
     ("台湾", "台湾", r"(?i)^(TW|台湾|臺灣)", "taiwan"),
-    ("韩国", "韩国", r"(?i)^(KR|韩国|Korea|首尔)", "korea"),
+    ("韩国", "韩国", r"(?i)^(KR|韩国|Korea|首尔)", "south_korea"),
+    ("英国", "英国", r"(?i)^(UK|GB|英国|United Kingdom|伦敦|London)", "uk"),
+    ("德国", "德国", r"(?i)^(DE|德国|Germany|法兰克福|Frankfurt)", "eu"),
+    ("法国", "法国", r"(?i)^(FR|法国|France|巴黎|Paris)", "eu"),
+    ("荷兰", "荷兰", r"(?i)^(NL|荷兰|Netherlands|阿姆斯特丹)", "eu"),
+    ("意大利", "意大利", r"(?i)^(IT|意大利|Italy|米兰)", "eu"),
+    ("西班牙", "西班牙", r"(?i)^(ES|西班牙|Spain|马德里)", "eu"),
+    ("欧洲", "欧洲", r"(?i)^(EU|欧洲|Europe)", "eu"),
 ]
 REGION_MAP = {r[0]: r for r in REGION_DEFS}
 
@@ -169,6 +176,7 @@ def default_settings():
         "airports": [],                      # [{"name":..,"url":..,"interval":86400}]
         "nodes": [],                         # 手动节点原始分享链接（一行一个）
         "regions": ["香港", "日本", "新加坡"],
+        "custom_groups": [],
         "groups": default_groups(),
         "ruleset_enabled": True,
         "tun_enable": TUN_ENABLE,            # 旁路由模式（TUN），默认由 compose 的 TUN_ENABLE 决定
@@ -454,13 +462,27 @@ def gen_config(s):
     regions = [r for r in (s.get("regions") or []) if r in REGION_MAP]
     saved = s.get("groups") or {}
     dflt = default_groups()
-    base12 = biz_members(regions, "")
+    cgnames = [str(c.get("name")).strip() for c in (s.get("custom_groups") or [])
+               if isinstance(c, dict) and str(c.get("name") or "").strip()]
+
+    def _with_cg(mem):
+        """把自定义策略组插到「全部自动」之前（地区三件套之后）"""
+        out = list(mem)
+        if not cgnames:
+            return out
+        try:
+            pos = out.index("全部自动")
+        except ValueError:
+            pos = len(out)
+        return out[:pos] + list(cgnames) + out[pos:]
+
+    base12 = _with_cg(biz_members(regions, ""))
     base13 = [DEFAULT_PROXY] + base12
     groups = []
 
     # 12 个业务组：直接指向「地区故转 / 手动 / 自动」，默认取本组优先地区的故转
     for name, icon, pref in BIZ_DEFS:
-        mem = biz_members(regions, region_label(pref))
+        mem = _with_cg(biz_members(regions, region_label(pref)))
         t = saved.get(name) or dflt[name]
         if t not in mem:
             t = dflt[name]
@@ -491,6 +513,37 @@ def gen_config(s):
                 g["url"] = HC_URL
                 g["interval"] = 300
             groups.append(g)
+
+    # ---- 自定义策略组（面板「🧩 自定义策略组」里自由增减）
+    known = {g["name"] for g in groups}
+    for cg in (s.get("custom_groups") or []):
+        if not isinstance(cg, dict):
+            continue
+        nm = str(cg.get("name") or "").strip()
+        if not nm or nm in known:
+            continue
+        typ = str(cg.get("type") or "select")
+        if typ not in ("select", "url-test", "fallback", "load-balance"):
+            typ = "select"
+        mem = [str(x).strip() for x in (cg.get("members") or []) if str(x).strip()]
+        mem = [x for x in mem if x != nm]
+        flt = str(cg.get("filter") or "").strip()
+        cgd = {"name": nm, "type": typ, "icon": ICON_PURE % "select"}
+        if mem:
+            cgd["proxies"] = mem
+            if flt:
+                cgd["filter"] = flt
+        else:
+            cgd["include-all"] = True
+            cgd["filter"] = flt if flt else EXCL
+        if typ != "select":
+            cgd["url"] = HC_URL
+            try:
+                cgd["interval"] = int(cg.get("interval") or 300)
+            except Exception:
+                cgd["interval"] = 300
+        groups.append(cgd)
+        known.add(nm)
 
     groups.append({"name": "漏网之鱼", "type": "select", "proxies": base13,
                    "default-selected": DEFAULT_PROXY, "icon": ICON_PURE % "final"})
@@ -1731,6 +1784,27 @@ def save_groups(s, d):
         g = s.get("groups") or {}
         g.update({str(k): str(v) for k, v in d["groups"].items()})
         s["groups"] = g
+    if isinstance(d.get("custom_groups"), list):
+        out = []
+        for cg in d["custom_groups"]:
+            if not isinstance(cg, dict):
+                continue
+            nm = str(cg.get("name") or "").strip()[:24]
+            if not nm or nm in ("直连", "DIRECT", "dns"):
+                continue
+            typ = str(cg.get("type") or "select")
+            if typ not in ("select", "url-test", "fallback", "load-balance"):
+                typ = "select"
+            mem = [str(x).strip()[:80] for x in (cg.get("members") or []) if str(x).strip()]
+            mem = [x for x in mem if x != nm]
+            try:
+                itv = int(cg.get("interval") or 300)
+            except Exception:
+                itv = 300
+            out.append({"name": nm, "type": typ, "members": mem[:60],
+                        "filter": str(cg.get("filter") or "").strip()[:200],
+                        "icon": str(cg.get("icon") or "select")[:32], "interval": itv})
+        s["custom_groups"] = out
     if isinstance(d.get("rule_targets"), dict):
         s["rule_targets"] = {str(k): str(v) for k, v in d["rule_targets"].items()}
     if "ruleset_enabled" in d:
@@ -1932,6 +2006,12 @@ th{color:#475467;font-weight:600;font-size:12.5px}
    <div class=hint>勾选的地区会生成 手动(select) / 故转(fallback) / 自动(url-test) 三个策略组。</div></div>
   <div class=card><h2>🎯 业务组默认线路</h2><div class=grid2 id=bg></div>
    <div class=hint>TikTok 与 AI 默认走「狮城自动」（香港上不了 TikTok）；其余业务组默认走各自优先地区的「故转」，可自行改动。</div></div>
+  <div class=card><h2>🧩 自定义策略组（自由增减）</h2>
+   <div id=cg></div>
+   <div style="margin-top:10px"><button class=btn onclick="cgAdd()">➕ 添加策略组</button>
+     <span class=hint style="margin-left:8px">成员填名字、逗号分隔（如 <code>香港自动,日本故转</code>，也可直接写节点名）；成员留空则按「过滤规则」自动收录节点，过滤规则也留空 = 收录全部节点。</span></div>
+   <div class=hint>支持类型：select（手动选）/ url-test（自动测速）/ fallback（故障转移）/ load-balance（负载均衡）。改完记得点下面「保存策略并生成配置」。</div>
+  </div>
   <div class=card><h2>🧭 规则集分流</h2>
    <label class=chk><input type=checkbox id=rs_en onchange=rsToggle()> 启用规则集分流（七尺宇 qichiyuhub/rule + MetaCubeX meta-rules-dat）</label>
    <div class=hint>关闭后只保留基础规则（国内直连、其余走漏网之鱼）。</div></div>
@@ -2099,12 +2179,18 @@ function loadGroups(){
   fetch('/api/settings').then(r=>r.json()).then(function(d){
     var s=d.settings||{},regs=s.regions||[],g=s.groups||{};
     fetch('/api/status').then(r=>r.json()).then(function(st){
-      var lab={'香港':'香港','日本':'日本','新加坡':'狮城','美国':'美国','台湾':'台湾','韩国':'韩国'};
+      var lab={'香港':'香港','日本':'日本','新加坡':'狮城','美国':'美国','台湾':'台湾','韩国':'韩国','英国':'英国','德国':'德国','法国':'法国','荷兰':'荷兰','意大利':'意大利','西班牙':'西班牙','欧洲':'欧洲'};
       var labels=regs.map(function(r){return lab[r]||r});
       var mem=[].concat(labels.map(function(l){return l+'故转'}),labels.map(function(l){return l+'手动'}),
         labels.map(function(l){return l+'自动'}),['全部自动','全部手动','直连']);
+      var cgs=[];
+      (s.custom_groups||[]).forEach(function(x){ if(x && x.name){ cgs.push(x.name); } });
+      if(cgs.length){
+        var cgp=mem.indexOf('全部自动'); if(cgp<0){ cgp=mem.length; }
+        mem=mem.slice(0,cgp).concat(cgs, mem.slice(cgp));
+      }
       // 地区勾选
-      var all=['香港','日本','新加坡','美国','台湾','韩国'];var h='';
+      var all=['香港','日本','新加坡','美国','台湾','韩国','英国','德国','法国','荷兰','意大利','西班牙','欧洲'];var h='';
       all.forEach(function(r){h+='<label class=chk><input type=checkbox class=rgc value="'+esc(r)+'"'+
         (regs.indexOf(r)>=0?' checked':'')+'> '+esc(lab[r]||r)+'</label>'});
       $('#rg').innerHTML=h;
@@ -2118,14 +2204,82 @@ function loadGroups(){
       });
       $('#bg').innerHTML=b;
       $('#rs_en').checked=(s.ruleset_enabled!==false);
+      loadCustom();
     });
   });
 }
+/* ===== 自定义策略组（自由增减）由 DSH 加入 ===== */
+var CG=[];
+function loadCustom(){
+  fetch('/api/settings').then(function(r){ return r.json(); }).then(function(d){
+    var s=(d&&d.settings)||{};
+    CG=(s.custom_groups||[]).slice();
+    cgRender();
+  }).then(null,function(){
+    var box=document.getElementById('cg');
+    if(box){ box.innerHTML='<div class=hint>读取自定义策略组失败，请刷新页面重试（如果你刚改过密码，需要重建容器才生效）。</div>'; }
+  });
+}
+function cgRender(){
+  var box=document.getElementById('cg');
+  if(!box){ return; }
+  if(!CG.length){
+    box.innerHTML='<div class=hint>还没有自定义策略组 —— 点下面的「➕ 添加策略组」就能加，想加几个都行。</div>';
+    return;
+  }
+  var types=['select','url-test','fallback','load-balance'];
+  var h='', i, t;
+  for(i=0;i<CG.length;i++){
+    var g=CG[i]||{};
+    var opts='';
+    for(t=0;t<types.length;t++){ opts+='<option'+(g.type===types[t]?' selected':'')+'>'+types[t]+'</option>'; }
+    h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding:10px 0;border-bottom:1px solid #e6ecf5">'
+      +'<div style="flex:0 0 150px"><label>组名</label><input class=cg_name value="'+esc(g.name||'')+'" placeholder="例如 流媒体"></div>'
+      +'<div style="flex:0 0 140px"><label>类型</label><select class=cg_type>'+opts+'</select></div>'
+      +'<div style="flex:1 1 240px"><label>成员（逗号分隔，可留空）</label><input class=cg_mem value="'+esc((g.members||[]).join(','))+'" placeholder="香港自动,日本故转,全部自动"></div>'
+      +'<div style="flex:1 1 240px"><label>过滤规则（可留空）</label><input class=cg_flt value="'+esc(g.filter||'')+'" placeholder="留空=全部节点；也可写 香港 或 ^(HK|US)"></div>'
+      +'<div><button class="btn red" onclick="cgDel('+i+')">删除</button></div>'
+      +'</div>';
+  }
+  h='<div class=hint style="margin-bottom:6px">当前已保存 <b>'+CG.length+'</b> 个自定义策略组 —— 下面每一行都能直接改（改完点「保存策略并生成配置」生效）：</div>'+h;
+  box.innerHTML=h;
+}
+function cgAdd(){
+  CG.push({name:'',type:'select',members:[],filter:'',icon:'select',interval:300});
+  cgRender();
+}
+function cgDel(i){
+  if(!confirm('删除这个策略组？')){ return; }
+  CG.splice(i,1);
+  cgRender();
+}
+function cgCollect(){
+  var ns=document.querySelectorAll('.cg_name'), ts=document.querySelectorAll('.cg_type'),
+      ms=document.querySelectorAll('.cg_mem'), fs=document.querySelectorAll('.cg_flt');
+  var out=[], i, j;
+  for(i=0;i<ns.length;i++){
+    var parts=ms[i].value.split(','), mem=[];
+    for(j=0;j<parts.length;j++){ var v=parts[j].trim(); if(v){ mem.push(v); } }
+    out.push({name:ns[i].value.trim(), type:ts[i].value, members:mem,
+              filter:fs[i].value.trim(), icon:'select', interval:300});
+  }
+  return out;
+}
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded', function(){ loadCustom(); });
+} else {
+  loadCustom();
+}
 function rsToggle(){}
 function grSave(){
+  var cg=cgCollect(), cgi;
+  for(cgi=0;cgi<cg.length;cgi++){
+    if(!cg[cgi].name){ alert('第 '+(cgi+1)+' 个自定义策略组的「组名」还没填 —— 填上再保存就会生成 ✓'); return; }
+    if(cg[cgi].members.indexOf(cg[cgi].name)>=0){ alert('第 '+(cgi+1)+' 个自定义策略组的「成员」里不能填组名自己（会死循环）。要自动收录节点，请把「过滤规则」填成 优选 之类 ✓'); return; }
+  }
   var regs=[];document.querySelectorAll('.rgc').forEach(function(c){if(c.checked)regs.push(c.value)});
   var g={};document.querySelectorAll('.bgs').forEach(function(sel){g[sel.dataset.n]=sel.value});
-  apiPost('/api/groups',{regions:regs,groups:g,ruleset_enabled:$('#rs_en').checked},0);
+  apiPost('/api/groups',{regions:regs,groups:g,ruleset_enabled:$('#rs_en').checked,custom_groups:cg},0);
 }
 function loadTools(){
   fetch('/api/settings').then(r=>r.json()).then(function(d){
