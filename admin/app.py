@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.8.3"
+APP_VERSION = "2.8.4"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1854,14 +1854,22 @@ def _conn_match(want, host):
     return host == want or host.endswith("." + want) or want.endswith("." + host)
 
 
-SPLIT_LAT_PATH = "/favicon.ico"
+SPLIT_LAT_PATHS = ("/favicon.ico", "/robots.txt", "/")
 
 
 def _split_lat(rows):
-    """给 rows 补延迟：暖连接 + HEAD，只测 favicon 这种小资源（404 也照测），
-    不碰首页后端，所以这才是「真延迟」而不是「服务端生成时间」。"""
-    lat = _parallel([(r["group"], (lambda h=r["host"]: _lat_one("https://%s%s" % (h, SPLIT_LAT_PATH), 6.0, 2)))
-                     for r in rows], 22)
+    """给 rows 补延迟：暖连接 + HEAD，分别测 favicon / robots.txt / 首页，取最快的那个。
+    不同站点把静态资源放在不同 CDN 上，单一路径会误判（例如 Netflix 首页快、favicon 慢，
+    OneDrive 三样都慢），取最小值才最接近真实的网络往返。"""
+    def best_of(host):
+        best = 0
+        for p in SPLIT_LAT_PATHS:
+            ms = _lat_one("https://%s%s" % (host, p), 5.0, 2)
+            if ms and (best == 0 or ms < best):
+                best = ms
+        return best
+
+    lat = _parallel([(r["group"], (lambda h=r["host"]: best_of(h))) for r in rows], 45)
     for r in rows:
         r["ms"] = int(lat.get(r["group"]) or 0)
 
@@ -3112,7 +3120,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.8.3</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.8.4</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -3137,7 +3145,8 @@ th{color:#475467;font-weight:600;font-size:12.5px}
   <div class=card><h2>🧪 分流测试 <span class=sp></span>
     <button class=btn2 onclick="stLoad(1)">开始测试</button></h2>
    <table><thead><tr><th>业务组</th><th>代表站点</th><th>命中规则</th><th>实际策略链</th><th>判定</th><th>延迟</th></tr></thead><tbody id=st></tbody></table>
-   <div class=hint id=sth>点「开始测试」：每个业务组各发一个真实请求，同时读 mihomo 的连接记录，看它<b>命中了哪条规则</b>、<b>实际走了哪条策略链</b>（链尾就是最终业务组），再和该组应有的走向比对。</div></div>
+   <div class=hint id=sth>点「开始测试」：每个业务组各发一个真实请求，同时读 mihomo 的连接记录，看它<b>命中了哪条规则</b>、<b>实际走了哪条策略链</b>（链尾就是最终业务组），再和该组应有的走向比对。</div>
+   <div class=hint>延迟取该站点 <code>favicon</code> / <code>robots.txt</code> / <code>首页</code> 三者中最快的那个（小资源、只等响应头），所以不是页面加载时间；个别站点（如 OneDrive）本身落地线路慢，数值偏高是真实的。</div></div>
 
   <div class=card><h2>🩺 健康自检（7 项）</h2><table><tbody id=hc></tbody></table>
    <div class=hint>健康自检会真实尝试：容器状态、配置校验、经代理出网、面板接口、磁盘、程序文件、定时任务。</div></div>
