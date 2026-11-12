@@ -38,7 +38,7 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
-APP_VERSION = "2.9.8"
+APP_VERSION = "2.9.9"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -3486,7 +3486,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
   <div class=hmid>
    <span class=mk><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.2v5.9c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6.2z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.6"/></svg></span>
    <h1>mihomo 网页管理台<small>群晖 NAS · 单端口旁路由</small></h1>
-   <span class="pill" id=ver>v2.9.8</span>
+   <span class="pill" id=ver>v2.9.9</span>
    <span class="pill gray2" id=hd>群晖 NAS</span>
    <button id=mhuiBtn class=nodes onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()">节点面板（内嵌）</button>
   </div>
@@ -3543,8 +3543,9 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
    <div class=row><div><label>名称（英文/数字，作为提供者名）</label><input id=ap_n placeholder=airport></div>
    <div style="flex:2"><label>订阅链接（Clash / mihomo 格式）</label><input id=ap_u placeholder=https://...></div>
    <div><label>更新间隔（秒）</label><input id=ap_i value=86400></div></div>
-   <div style="margin-top:12px"><button class=btn onclick="apSave()">保存并生成配置</button></div>
-   <div class=hint>机场会生成独立的 <b>proxy-providers</b>，策略组用 <code>use</code> 引用；换机场只改这里。</div></div>
+   <div style="margin-top:12px"><button class=btn id=ap_save onclick="apSave()">保存并生成配置</button>
+    <button class=btn2 id=ap_cancel onclick="apCancel()" style="display:none;margin-left:8px">取消修改</button></div>
+   <div class=hint id=ap_hint>机场会生成独立的 <b>proxy-providers</b>，策略组用 <code>use</code> 引用；换机场只改这里。</div></div>
   <div class=card><h2><span class="ic ic-s"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 当前机场</h2><table>
    <thead><tr><th>名称</th><th>订阅链接</th><th>间隔</th><th>操作</th></tr></thead><tbody id=apt></tbody></table></div>
  </section>
@@ -6064,14 +6065,40 @@ function loadAirports(){
     var aps=(d.settings||{}).airports||[];var h='';
     aps.forEach(function(a){
       h+='<tr><td>'+esc(a.name)+'</td><td style="word-break:break-all">'+esc(a.url)+'</td><td>'+esc(a.interval||86400)+
-         '</td><td><button class="btn red" onclick="apDel(`'+esc(a.name)+'`)">删除</button></td></tr>'});
+         '</td><td style="white-space:nowrap"><button class=btn2 onclick="apEdit(`'+esc(a.name)+'`)">修改</button> '
+         +'<button class="btn red" onclick="apDel(`'+esc(a.name)+'`)">删除</button></td></tr>'});
     $('#apt').innerHTML=h||'<tr><td colspan=4>还没有机场</td></tr>';
   });
+}
+var AP_EDIT='';
+function apEdit(n){
+  fetch('/api/settings').then(function(r){ return r.json(); }).then(function(d){
+    var aps=(d.settings||{}).airports||[], i, a=null;
+    for(i=0;i<aps.length;i++){ if(String(aps[i].name)===String(n)){ a=aps[i]; break; } }
+    if(!a){ return; }
+    $('#ap_n').value=a.name||'';
+    $('#ap_u').value=a.url||'';
+    $('#ap_i').value=a.interval||86400;
+    AP_EDIT=String(n);
+    var sb=document.getElementById('ap_save'), cb=document.getElementById('ap_cancel'), hn=document.getElementById('ap_hint');
+    if(sb){ sb.textContent='保存修改'; }
+    if(cb){ cb.style.display='inline-flex'; }
+    if(hn){ hn.innerHTML='正在修改「'+esc(AP_EDIT)+'」—— 名称也能改（改名就等于给这个提供者重命名）'; }
+    var u=$('#ap_u'); if(u && u.scrollIntoView){ u.scrollIntoView({behavior:'smooth',block:'center'}); }
+  });
+}
+function apCancel(){
+  AP_EDIT='';
+  $('#ap_n').value=''; $('#ap_u').value=''; $('#ap_i').value='86400';
+  var sb=document.getElementById('ap_save'), cb=document.getElementById('ap_cancel'), hn=document.getElementById('ap_hint');
+  if(sb){ sb.textContent='保存并生成配置'; }
+  if(cb){ cb.style.display='none'; }
+  if(hn){ hn.innerHTML='机场会生成独立的 <b>proxy-providers</b>，策略组用 <code>use</code> 引用；换机场只改这里。'; }
 }
 function apSave(){
   var n=$('#ap_n').value.trim(),u=$('#ap_u').value.trim(),i=$('#ap_i').value.trim();
   if(!u){upFail('请填订阅链接');return}
-  apiPost('/api/airports',{action:'save',name:n,url:u,interval:i},0);
+  apiPost('/api/airports',{action:'save',name:n,url:u,interval:i,old:AP_EDIT},0);
 }
 function apDel(n){ if(!confirm('删除机场“'+n+'”？')) return; apiPost('/api/airports',{action:'del',name:n},0); }
 function loadNodes(){
