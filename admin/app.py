@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.9.3"
+APP_VERSION = "2.9.4"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -3350,6 +3350,52 @@ html.dark .g2{color:#4ade80}html.dark .y2{color:#fbbf24}html.dark .r2{color:#f87
 .ipmi td:first-child{color:var(--t3);width:106px}
 .ok2{color:var(--ok);font-weight:700}.no2{color:var(--t3)}
 
+/* ===================== 彩色图标 ===================== */
+.ic{width:28px;height:28px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.ic svg{width:16px;height:16px;display:block}
+.ic.sm{width:23px;height:23px;border-radius:7px}
+.ic.sm svg{width:13px;height:13px}
+.ic-b{background:#e8f0ff;color:#2563eb}
+.ic-c{background:#e0f7fb;color:#0891b2}
+.ic-v{background:#f1eaff;color:#7c3aed}
+.ic-r{background:#ffe8ee;color:#e11d48}
+.ic-g{background:#e4f7ea;color:#059669}
+.ic-a{background:#fff3e0;color:#d97706}
+.ic-i{background:#e9ebff;color:#4f46e5}
+.ic-t{background:#e0f5f2;color:#0d9488}
+.ic-o{background:#ffefe4;color:#ea580c}
+.ic-p{background:#ffe9f4;color:#db2777}
+.ic-s{background:#eef1f6;color:#475569}
+.ic-k{background:#e0f7fb;color:#0284c7}
+html.dark .ic-b{background:rgba(37,99,235,.20);color:#8ab4ff}
+html.dark .ic-c{background:rgba(8,145,178,.22);color:#67e8f9}
+html.dark .ic-v{background:rgba(124,58,237,.22);color:#c4b5fd}
+html.dark .ic-r{background:rgba(225,29,72,.20);color:#fda4af}
+html.dark .ic-g{background:rgba(5,150,105,.22);color:#6ee7b7}
+html.dark .ic-a{background:rgba(217,119,6,.22);color:#fcd34d}
+html.dark .ic-i{background:rgba(79,70,229,.22);color:#a5b4fc}
+html.dark .ic-t{background:rgba(13,148,136,.22);color:#5eead4}
+html.dark .ic-o{background:rgba(234,88,12,.20);color:#fdba74}
+html.dark .ic-p{background:rgba(219,39,119,.20);color:#f9a8d4}
+html.dark .ic-s{background:rgba(71,85,105,.30);color:#cbd5e1}
+html.dark .ic-k{background:rgba(2,132,199,.22);color:#7dd3fc}
+
+/* 导航图标 */
+nav a{display:inline-flex;align-items:center;gap:7px}
+nav a .nv{width:15px;height:15px;flex:0 0 auto}
+nav a.on .nv{color:#fff}
+.nv-g{color:#059669}.nv-k{color:#0284c7}.nv-i{color:#4f46e5}
+.nv-a{color:#d97706}.nv-v{color:#7c3aed}.nv-r{color:#e11d48}
+html.dark .nv-g{color:#34d399}html.dark .nv-k{color:#38bdf8}html.dark .nv-i{color:#818cf8}
+html.dark .nv-a{color:#fbbf24}html.dark .nv-v{color:#a78bfa}html.dark .nv-r{color:#fb7185}
+
+/* 指标卡图标 */
+.kv>div{display:flex;align-items:center;gap:11px}
+.kv .kvi{width:34px;height:34px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.kv .kvi svg{width:17px;height:17px;display:block}
+.kvt{min-width:0;flex:1 1 auto}
+.kvt span{display:block;overflow-wrap:anywhere}
+
 /* ===================== 深色兼容：覆盖 JS 写死的内联浅色 ===================== */
 html.dark [style*="#e6ecf5"]{border-color:var(--bd2)!important}
 html.dark [style*="color:#d92d20"]{color:var(--bad)!important}
@@ -3384,7 +3430,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
   <div class=hmid>
    <span class=mk><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.2v5.9c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6.2z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.6"/></svg></span>
    <h1>mihomo 网页管理台<small>群晖 NAS · 单端口旁路由</small></h1>
-   <span class="pill" id=ver>v2.9.3</span>
+   <span class="pill" id=ver>v2.9.4</span>
    <span class="pill gray2" id=hd>群晖 NAS</span>
    <button id=mhuiBtn class=nodes onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()">节点面板（内嵌）</button>
   </div>
@@ -3396,76 +3442,75 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
 </header>
 <nav>
  <div class=hw>
- <a data-t=status class=on>状态</a><a data-t=airports>机场</a><a data-t=nodes>节点</a>
- <a data-t=groups>策略</a><a data-t=sublinks>订阅</a><a data-t=tools>工具</a>
+ <a data-t=status class=on><svg class="nv nv-g" viewBox="0 0 24 24"><path d="M2 12h4l3-7 4 14 3-7h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>状态</a><a data-t=airports><svg class="nv nv-k" viewBox="0 0 24 24"><path d="M6 18h11a4 4 0 0 0 .7-8 6 6 0 0 0-11.6 1.4A3.6 3.6 0 0 0 6 18z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>机场</a><a data-t=nodes><svg class="nv nv-i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><rect x="3" y="13" width="18" height="7" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M7 7.5h.01M7 16.5h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>节点</a><a data-t=groups><svg class="nv nv-a" viewBox="0 0 24 24"><path d="M4 7h9M18 7h2M4 17h3M12 17h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="15.5" cy="7" r="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="9.5" cy="17" r="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>策略</a><a data-t=sublinks><svg class="nv nv-v" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>订阅</a><a data-t=tools><svg class="nv nv-r" viewBox="0 0 24 24"><path d="M15 3a5 5 0 0 0-4.6 7L4 16.4V20h3.6l6.4-6.4A5 5 0 0 0 21 9l-3 3-3-3 3-3a5 5 0 0 0-3-3z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>工具</a>
  </div>
 </nav>
 </div>
 <main>
  <div id=wp class=warnbox style="display:none">⚠️ 你还在用默认密码，请立刻到「工具」页改掉，否则同网段任何人都能打开管理台并看到你的节点。</div>
  <section id=tab-status>
-  <div class=card><h2>📊 运行状态 <span class=sp></span>
+  <div class=card><h2><span class="ic ic-b"><svg viewBox="0 0 24 24"><path d="M2 12h4l3-7 4 14 3-7h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 运行状态 <span class=sp></span>
     <button class="btn" onclick="gen()">立即更新配置</button></h2>
    <div class=kv id=kv></div>
    <div id=kupd></div></div>
-  <div class=card><h2>🌍 当前网络信息 <span class=sp></span>
+  <div class=card><h2><span class="ic ic-c"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M3 12h18M12 3c2.6 3 2.6 15 0 18-2.6-3-2.6-15 0-18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 当前网络信息 <span class=sp></span>
     <button class=btn2 onclick="niLoad(1)">刷新</button>
     <label class=chk style="float:none;display:inline-block;margin-left:10px;font-weight:400;font-size:12px"><input type=checkbox id=niauto checked onchange="niAutoToggle()"> 自动刷新</label></h2>
    <div id=ni></div>
    <div id=nil></div>
    <div class=hint>国内测试走<b>直连</b>，国外 / 墙外走<b>代理</b>（都是面板所在群晖的真实出口）；延迟为群晖经 mihomo 实测（同一条连接预热后取最小值，所以比首次冷连接低）；<span id=nit></span></div></div>
-  <div class=card><h2>🧪 分流测试 <span class=sp></span>
+  <div class=card><h2><span class="ic ic-v"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L5 18a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M7.5 14h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 分流测试 <span class=sp></span>
     <button class=btn2 onclick="stLoad(1)">开始测试</button></h2>
    <table><thead><tr><th>业务组</th><th>代表站点</th><th>命中规则</th><th>实际策略链</th><th>判定</th><th>延迟</th></tr></thead><tbody id=st></tbody></table>
    <div class=hint id=sth>点「开始测试」：每个业务组各发一个真实请求，同时读 mihomo 的连接记录，看它<b>命中了哪条规则</b>、<b>实际走了哪条策略链</b>（链尾就是最终业务组），再和该组应有的走向比对。</div>
    <div class=hint>延迟取该站点 <code>favicon</code> / <code>robots.txt</code> / <code>首页</code> 三者中最快的那个（小资源、只等响应头），所以不是页面加载时间；个别站点（如 OneDrive）本身落地线路慢，数值偏高是真实的。</div></div>
 
-  <div class=card><h2>🩺 健康自检（7 项）</h2><table><tbody id=hc></tbody></table>
+  <div class=card><h2><span class="ic ic-r"><svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-9a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 4.6-7 9-7 9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M8 12h2l1.5-2 2 4 1.5-2h1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 健康自检（7 项）</h2><table><tbody id=hc></tbody></table>
    <div class=hint>健康自检会真实尝试：容器状态、配置校验、经代理出网、面板接口、磁盘、程序文件、定时任务。</div></div>
-  <div class=card><h2>📦 代理提供者（机场）</h2><table>
+  <div class=card><h2><span class="ic ic-k"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v10l-8 4-8-4V7z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M4 7l8 4 8-4M12 11v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 代理提供者（机场）</h2><table>
    <thead><tr><th>提供者</th><th>节点数</th><th>更新时间</th></tr></thead><tbody id=pv></tbody></table></div>
  </section>
 
  <section id=tab-airports hidden>
-  <div class=card><h2>✈️ 添加 / 修改机场订阅</h2>
+  <div class=card><h2><span class="ic ic-t"><svg viewBox="0 0 24 24"><path d="M6 17h10a3.6 3.6 0 0 0 .6-7.2A5.4 5.4 0 0 0 6.6 11 3.2 3.2 0 0 0 6 17z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M11 21v-6M8.5 17.5 11 15l2.5 2.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 添加 / 修改机场订阅</h2>
    <div class=row><div><label>名称（英文/数字，作为提供者名）</label><input id=ap_n placeholder=airport></div>
    <div style="flex:2"><label>订阅链接（Clash / mihomo 格式）</label><input id=ap_u placeholder=https://...></div>
    <div><label>更新间隔（秒）</label><input id=ap_i value=86400></div></div>
    <div style="margin-top:12px"><button class=btn onclick="apSave()">保存并生成配置</button></div>
    <div class=hint>机场会生成独立的 <b>proxy-providers</b>，策略组用 <code>use</code> 引用；换机场只改这里。</div></div>
-  <div class=card><h2>当前机场</h2><table>
+  <div class=card><h2><span class="ic ic-s"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 当前机场</h2><table>
    <thead><tr><th>名称</th><th>订阅链接</th><th>间隔</th><th>操作</th></tr></thead><tbody id=apt></tbody></table></div>
  </section>
 
  <section id=tab-nodes hidden>
-  <div class=card><h2>➕ 添加手动节点</h2>
+  <div class=card><h2><span class="ic ic-i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><rect x="3" y="13" width="18" height="7" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M7 7.5h.01M7 16.5h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 添加手动节点</h2>
    <label>批量粘贴分享链接，一行一个（支持 vmess / vless(含 reality) / ss / trojan / hysteria2 / hysteria / tuic / anytls / http / socks5，也可贴 Clash 风格单行）</label>
    <textarea id=nd_t placeholder="vless://...&#10;vmess://..."></textarea>
    <div style="margin-top:12px"><button class=btn onclick="ndAdd()">解析并添加</button>
      <button class="btn red" onclick="ndClear()">清空全部手动节点</button></div>
    <div class=hint id=nd_h>当前手动节点：0 个</div></div>
-  <div class=card><h2>手动节点列表</h2><table>
+  <div class=card><h2><span class="ic ic-s"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 手动节点列表</h2><table>
    <thead><tr><th>名称</th><th>类型</th><th>服务器</th><th>端口</th><th>操作</th></tr></thead><tbody id=ndt></tbody></table></div>
  </section>
 
  <section id=tab-groups hidden>
-  <div class=card><h2>🌍 地区组（三件套）</h2><div id=rg></div>
+  <div class=card><h2><span class="ic ic-c"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M3 12h18M12 3c2.6 3 2.6 15 0 18-2.6-3-2.6-15 0-18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 地区组（三件套）</h2><div id=rg></div>
    <div class=hint>勾选的地区会生成 手动(select) / 故转(fallback) / 自动(url-test) 三个策略组。</div></div>
-  <div class=card><h2>🎯 业务组默认线路</h2><div class=grid2 id=bg></div>
+  <div class=card><h2><span class="ic ic-a"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 业务组默认线路</h2><div class=grid2 id=bg></div>
    <div class=hint>TikTok 与 AI 默认走「狮城自动」（香港上不了 TikTok）；其余业务组默认走各自优先地区的「故转」，可自行改动。</div></div>
-  <div class=card><h2>🧩 自定义策略组（自由增减）</h2>
+  <div class=card><h2><span class="ic ic-v"><svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M3 13l9 5 9-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 自定义策略组（自由增减）</h2>
    <div id=cg></div>
    <div style="margin-top:10px"><button class=btn onclick="cgAdd()">➕ 添加策略组</button>
      <span class=hint style="margin-left:8px">成员填名字、逗号分隔（如 <code>香港自动,日本故转</code>，也可直接写节点名）；成员留空则按「过滤规则」自动收录节点，过滤规则也留空 = 收录全部节点。</span></div>
    <div class=hint>支持类型：select（手动选）/ url-test（自动测速）/ fallback（故障转移）/ load-balance（负载均衡）。改完记得点下面「保存策略并生成配置」。</div>
   </div>
-  <div class=card><h2>🧭 自定义分流（按网站选直连/代理）</h2>
+  <div class=card><h2><span class="ic ic-g"><svg viewBox="0 0 24 24"><path d="M12 4v16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M6 8h6M12 14h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M9 5.5 6 8l3 2.5M15 11.5 18 14l-3 2.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 自定义分流（按网站选直连/代理）</h2>
    <div id=cr></div>
    <div style="margin-top:10px"><button class=btn onclick="crAdd()">➕ 添加一行</button>
     <span class=hint style="margin-left:8px">域名写 <code>example.com</code> 就行（自动包含它自己和所有子域）；去向可选 <b>直连</b> / <b>代理（漏网之鱼）</b> / 任意地区组或自定义组。改完点下面「保存策略并生成配置」✓</span></div>
    <div class=hint>这条规则排在规则集<b>前面</b>，所以优先级最高：选了直连就一定直连，选了某个组就一定走那个组。</div></div>
 
-  <div class=card><h2>🧭 规则集分流</h2>
+  <div class=card><h2><span class="ic ic-o"><svg viewBox="0 0 24 24"><path d="M4 5h16M7 12h10M10 19h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 规则集分流</h2>
    <div id=rs></div>
    <div style="margin-top:8px"><button class=btn2 onclick="rsAdd()">➕ 添加自定义规则集</button>
     <button class=btn2 onclick="rsReset()">全部恢复默认地址</button></div>
@@ -3476,7 +3521,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
  </section>
 
  <section id=tab-tools hidden>
-  <div class=card><h2>🔌 端口与地址</h2>
+  <div class=card><h2><span class="ic ic-k"><svg viewBox="0 0 24 24"><path d="M9 3v6M15 3v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M6 9h12v3a6 6 0 0 1-12 0z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M12 18v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 端口与地址</h2>
    <div class=row>
     <div><label>绑定 IP（本机地址）</label><input id=t_ip readonly style="background:#f2f4f7;color:#98a2b3;cursor:not-allowed"></div>
     <div><label>管理台绑定</label><input id=t_ab readonly style="background:#f2f4f7;color:#98a2b3;cursor:not-allowed"></div>
@@ -3495,14 +3540,14 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
     <b>内核接口端口</b>（默认 9091）只绑 <code>127.0.0.1</code>，是管理台和内核之间的内部通道，不对外、也不用在路由器上放通。</div>
    <div class=hint>改<b>密码</b>：点「保存」即可 ✓；改<b>端口</b>：先点「保存」✓，再点「应用并重建容器」才算生效 ✓</div></div>
 
-  <div class=card><h2>⏰ 定时自动更新</h2>
+  <div class=card><h2><span class="ic ic-p"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 定时自动更新</h2>
    <label class=chk><input type=checkbox id=t_sch> 启用</label>
    <div class=row><div><label>每天更新时间（HH:MM）</label><input id=t_st placeholder=04:00></div></div>
    <label class=chk style="margin-top:10px"><input type=checkbox id=t_au onchange="auToggle()">
     自动检查更新</label>
    <div style="margin-top:12px"><button class=btn onclick="tlSave()">保存</button></div></div>
 
-  <div class=card><h2>🧰 维护工具</h2>
+  <div class=card><h2><span class="ic ic-s"><svg viewBox="0 0 24 24"><path d="M15 3a5 5 0 0 0-4.6 7L4 16.4V20h3.6l6.4-6.4A5 5 0 0 0 21 9l-3 3-3-3 3-3a5 5 0 0 0-3-3z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 维护工具</h2>
    <div class=row>
     <div><button class=btn onclick="gen()">立即更新配置</button><div class=hint>重新生成 + 校验 + 热重载</div></div>
     <div><button class=btn onclick="chkUpd()">检查更新</button><div class=hint>看仓库有没有新版 <span id=upTip></span></div></div>
@@ -3511,16 +3556,16 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
     <div><button class="btn red" onclick="kdRestart()">重启内核容器</button><div class=hint>热重载不生效时用</div></div>
    </div></div>
 
-  <div class=card><h2>💾 备份与回滚</h2><table>
+  <div class=card><h2><span class="ic ic-t"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 备份与回滚</h2><table>
    <thead><tr><th>备份文件</th><th>大小</th><th>时间</th><th>操作</th></tr></thead><tbody id=bk></tbody></table></div>
 
-  <div class=card><h2>📜 运行日志</h2>
+  <div class=card><h2><span class="ic ic-i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M7 9l3 3-3 3M13 15h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 运行日志</h2>
    <div style="margin-bottom:8px"><button class=btn onclick="loadLogs()">刷新日志</button></div>
    <div id=logs>点击「刷新日志」加载</div></div>
  </section>
 
  <section id=tab-sublinks hidden>
-  <div class=card><h2>🔗 订阅生成 <span class=sp></span><span class=hint>把自己的订阅变成一个可分享的链接</span></h2>
+  <div class=card><h2><span class="ic ic-v"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 订阅生成 <span class=sp></span><span class=hint>把自己的订阅变成一个可分享的链接</span></h2>
    <div class=hint><b>自定义短链</b>：填了就得到 <code>/sub/你的名字</code>（也支持 <code>/c/你的名字</code> ✓）；不填自动给随机串 ✓。建好后列表里可点「改短链」✓ 改完旧链接立刻失效 ✓。<br><b>自适应链接</b>：同一个链接会按客户端自动返回 Clash / V2Ray / sing-box / Surge ✓ 朋友不用选格式 ✓。</div>
    <div class=hint>把<b>节点</b>（<code>vmess://</code> <code>vless://</code> <code>ss://</code> <code>trojan://</code> <code>hysteria2://</code> 等分享链接，每行一个，可多行）贴进下面 → 保存后就得到一条<b>属于你自己的订阅（机场）链接</b>：<b>Clash</b>（含你面板这套策略组）和 <b>V2Ray</b>（base64）。<br>也可以直接贴<b>订阅链接</b>（<code>http</code> 开头）→ 会当作上游机场合并进来。数据只存在你家 NAS（<code>/data/sublinks.json</code>），不经过任何第三方。</div>
    <div class=row style="margin-top:10px">
@@ -3533,7 +3578,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
    <div style="margin-top:10px"><label>只保留这些地区（不勾 = 全部；对 Clash 输出生效）</label>
     <div id=sb_rg style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px"></div></div>
   </div>
-  <div class=card><h2>📋 已有订阅</h2><div id=sb_list></div></div>
+  <div class=card><h2><span class="ic ic-a"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M9 4V3h6v1M9 10h6M9 14h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 已有订阅</h2><div id=sb_list></div></div>
  </section>
 <div class=foot><span>mihomo 网页管理台</span><span class=dot>·</span><span>群晖 NAS · 单端口旁路由</span><span class=dot>·</span><span>配置改动自动热重载</span></div>
 </main>
@@ -5897,17 +5942,26 @@ function updKernel(){
   upModal('⏳ 正在更新内核（拉取镜像 + 重建容器，约 1~2 分钟）…');
   apiPost('/api/kernel-update',{},1).then(function(){setTimeout(loadStatus,1500)});
 }
+var KVIC={
+ run:'<svg viewBox="0 0 24 24"><path d="M2 12h4l3-7 4 14 3-7h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+ ver:'<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+ ap:'<svg viewBox="0 0 24 24"><path d="M6 18h11a4 4 0 0 0 .7-8 6 6 0 0 0-11.6 1.4A3.6 3.6 0 0 0 6 18z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+ nd:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><rect x="3" y="13" width="18" height="7" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M7 7.5h.01M7 16.5h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+ ip:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M3 12h18M12 3c2.6 3 2.6 15 0 18-2.6-3-2.6-15 0-18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+ pa:'<svg viewBox="0 0 24 24"><path d="M9 3v6M15 3v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M6 9h12v3a6 6 0 0 1-12 0z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M12 18v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+ ui:'<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>'
+};
 function loadStatus(){
   fetch('/api/status').then(r=>r.json()).then(d=>{
     $('#wp').style.display = d.weak_pass ? 'block' : 'none';
     $('#kv').innerHTML=
-      '<div><b>'+esc(d.kernel.state)+'</b><span>内核容器 '+esc(d.kernel.name)+'</span></div>'+
-      '<div><b>'+esc(d.kernel.version||'-')+((d.kernel_update&&d.kernel_update.has_update)?' <span class="pill bad">有新版 '+esc(d.kernel_update.latest)+'</span>':'')+'</b><span>mihomo 版本</span></div>'+
-      '<div><b>'+esc(d.airports.length)+'</b><span>机场数量</span></div>'+
-      '<div><b>'+esc(d.manual_count)+'</b><span>手动节点</span></div>'+
-      '<div><b style="font-size:13px">'+esc(d.out_ip||'未测出')+'</b><span>代理出口 IP</span></div>'+
-      '<div><b style="font-size:13px">'+esc(d.proxy_addr)+'</b><span>代理地址</span></div>'+
-      '<div><b style="font-size:13px"><a href="'+esc(d.panel_url)+'" target="_blank" style="color:#58a6ff">打开节点面板 ↗</a></b><span>'+esc(d.panel_url_full||d.panel_url)+'（同一端口，内嵌）</span></div>';
+      '<div><i class="kvi ic-g">'+KVIC.run+'</i><div class=kvt><b>'+esc(d.kernel.state)+'</b><span>内核容器 '+esc(d.kernel.name)+'</span></div></div>'+
+      '<div><i class="kvi ic-b">'+KVIC.ver+'</i><div class=kvt><b>'+esc(d.kernel.version||'-')+((d.kernel_update&&d.kernel_update.has_update)?' <span class="pill bad">有新版 '+esc(d.kernel_update.latest)+'</span>':'')+'</b><span>mihomo 版本</span></div></div>'+
+      '<div><i class="kvi ic-k">'+KVIC.ap+'</i><div class=kvt><b>'+esc(d.airports.length)+'</b><span>机场数量</span></div></div>'+
+      '<div><i class="kvi ic-i">'+KVIC.nd+'</i><div class=kvt><b>'+esc(d.manual_count)+'</b><span>手动节点</span></div></div>'+
+      '<div><i class="kvi ic-c">'+KVIC.ip+'</i><div class=kvt><b style="font-size:13px">'+esc(d.out_ip||'未测出')+'</b><span>代理出口 IP</span></div></div>'+
+      '<div><i class="kvi ic-v">'+KVIC.pa+'</i><div class=kvt><b style="font-size:13px">'+esc(d.proxy_addr)+'</b><span>代理地址</span></div></div>'+
+      '<div><i class="kvi ic-o">'+KVIC.ui+'</i><div class=kvt><b style="font-size:13px"><a href="'+esc(d.panel_url)+'" target="_blank" style="color:#58a6ff">打开节点面板 ↗</a></b><span>'+esc(d.panel_url_full||d.panel_url)+'（同一端口，内嵌）</span></div></div>';
     var h='';d.providers.forEach(function(p){
       h+='<tr><td>'+esc(p.name)+'</td><td>'+esc(p.nodes)+'</td><td>'+esc(p.updated)+'</td></tr>'});
     $('#pv').innerHTML=h||'<tr><td colspan=3>还没有机场，去「机场」页面添加</td></tr>';
@@ -6283,7 +6337,7 @@ function ipFill(ip,data){
   var asn=r.asn||r.asn_num||'', tz=r.timezone||'';
   var lat=ipNum(r.lat||r.latitude), lon=ipNum(r.lon||r.longitude);
   var geo=[country,region,city].filter(function(x){return !!x;}).join(' ');
-  var h='<div><h3>📍 基本信息</h3><table>'
+  var h='<div><h3><span class="ic sm ic-b"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M12 11v6M12 8h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 基本信息</h3><table>'
     +'<tr><td>IP 地址</td><td>'+esc(ip)+'</td></tr>'
     +'<tr><td>地理位置</td><td>'+esc(geo||'未知')+'</td></tr>'
     +'<tr><td>时区</td><td>'+esc(tz||'未知')+'</td></tr>'
@@ -6306,7 +6360,7 @@ function ipFill(ip,data){
     var rv=ipNum(risk);
     rows+='<tr><td>风控评级</td><td>'+esc(String(rv))+'</td></tr>';
   }
-  if(n){ h+='<div><h3>🛡 安全检测</h3><table>'+rows+'</table>'
+  if(n){ h+='<div><h3><span class="ic sm ic-g"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7.5-7 9-4-1.5-7-5-7-9V6z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 安全检测</h3><table>'+rows+'</table>'
     +'<div class=hint style="margin-top:6px">'+(src==='ipapi.is'?'免费档不一定返回全部项，缺失的不会显示':'')+'</div></div>'; }
   var inf=document.getElementById('ipmi');
   if(inf){ inf.innerHTML=h; }
@@ -6543,7 +6597,7 @@ loadStatus();
  </div>
  <iframe id=mhuiF style="width:100%;height:calc(100% - 38px);border:0"></iframe>
 </div><div id=ipm><div class=ipmb>
-  <div class=ipmh>🔍 IP 详细信息 <span class=src id=ipm-src></span><button onclick="ipHide()">×</button></div>
+  <div class=ipmh><span class="ic ic-b"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M16 16l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> IP 详细信息 <span class=src id=ipm-src></span><button onclick="ipHide()">×</button></div>
   <div id=ipmm></div>
   <div class=ipmi id=ipmi></div>
 </div></div>
