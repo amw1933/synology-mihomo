@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.5"
+APP_VERSION = "2.6"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1564,6 +1564,293 @@ def _iface_ips():
     return out
 
 
+# ---------------------------------------------------------------- 当前网络信息 / 分流测试 / IP 详情
+NET_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+IPV4_RE = re.compile(r"(?<![\d.])((?:\d{1,3}\.){3}\d{1,3})(?![\d.])")
+
+# 延迟测试站点：(名称, 分组, 探测地址) —— 名称与前端图标表一一对应
+LAT_SITES = [
+    ('字节抖音', '国内', 'https://lf3-zlink-tos.ugurl.cn/obj/zebra-public/resource_lmmizj_1632398893.png'),
+    ('Bilibili', '国内', 'https://i0.hdslb.com/bfs/face/member/noface.jpg@24w_24h_1c'),
+    ('腾讯微信', '国内', 'https://res.wx.qq.com/a/wx_fed/assets/res/NTI4MWU5.ico'),
+    ('阿里淘宝', '国内', 'https://img.alicdn.com/imgextra/i2/O1CN01qnQCrN1VkzAWiU4Hs_!!6000000002692-2-tps-33-33.png'),
+    ('GitHub', '国际', 'https://github.github.io/janky/images/bg_hr.png'),
+    ('Telegram.DC5', '国际', 'https://flora.web.telegram.org/'),
+    ('X.com', '国际', 'https://abs.twimg.com/favicons/twitter.3.ico'),
+    ('YouTube', '国际', 'https://www.youtube.com/favicon.ico'),
+]
+
+# 分流测试目标：(key, 名称, 分组, 探针, 地址)
+#   trace  = 访问 https://<地址>/cdn-cgi/trace，正文 ip= 就是该站点看到的客户端 IP
+#   header = 请求地址，从响应头 X-Request-Ip / cdn-user-ip 取
+#   json   = 请求地址，正文里取第一个 IPv4
+SPLIT_TARGETS = [
+    ("qq", "腾讯", "国内", "json", "https://r.inews.qq.com/api/ip2city?otype=json", ""),
+    ("pconline", "太平洋", "国内", "json", "https://whois.pconline.com.cn/ipJson.jsp?json=true", ""),
+    ("taobao", "阿里淘宝", "国内", "json", "https://www.taobao.com/help/getip.php", ""),
+    ("bytedance-cn", "字节跳动", "国内", "header", "https://perfops.byte-test.com/500b-bench.jpg", ""),
+    ("cloudflare-cn", "科赋锐", "国内", "trace", "", "perfops.cloudflareperf.com"),
+    ("qualcomm-cn", "高通中国", "国内", "trace", "", "www.qualcomm.cn"),
+    ("cloudflare", "Cloudflare", "国际", "trace", "", "ip.skk.moe"),
+    ("discord", "Discord", "国际", "trace", "", "gateway.discord.gg"),
+    ("visa", "Visa", "国际", "trace", "", "www.visa.com"),
+    ("x", "X (Twitter)", "国际", "trace", "", "x.com"),
+    ("medium", "Medium", "国际", "trace", "", "medium.com"),
+    ("chatgpt", "ChatGPT", "AI", "trace", "", "chatgpt.com"),
+    ("claude", "Claude", "AI", "trace", "", "claude.ai"),
+    ("grok", "Grok", "AI", "trace", "", "grok.com"),
+    ("openai", "OpenAI", "AI", "trace", "", "openai.com"),
+    ("anthropic", "Anthropic", "AI", "trace", "", "anthropic.com"),
+    ("perplexity", "Perplexity", "AI", "trace", "", "www.perplexity.ai"),
+]
+
+CN_SRC = [("太平洋", "https://whois.pconline.com.cn/ipJson.jsp?json=true"),
+          ("腾讯", "https://r.inews.qq.com/api/ip2city?otype=json"),
+          ("淘宝", "https://www.taobao.com/help/getip.php")]
+OS_SRC = [("ipapi.is", "https://api.ipapi.is/"), ("ip.sb", "https://api.ip.sb/geoip")]
+WALL_SRC = [("Google", "https://www.google.com/generate_204"),
+            ("推特", "https://x.com/"),
+            ("YouTube", "https://www.youtube.com/")]
+
+_NI_CACHE = {"t": 0.0, "d": None}
+_LAT_CACHE = {"t": 0.0, "d": None}
+_SPLIT_CACHE = {"t": 0.0, "d": None}
+_GEO_CACHE = {}
+_NI_LOCK = threading.Lock()
+
+
+def _http_probe(url, timeout=7.0, maxbody=32768):
+    """GET 一个 URL，返回 (毫秒, 状态码, 正文, 响应头小写字典)。失败返回 (0, 0, '', {})"""
+    t0 = time.time()
+    try:
+        rq = urllib.request.Request(url, headers={"User-Agent": NET_UA,
+                                                  "Accept": "*/*", "Cache-Control": "no-cache"})
+        with urllib.request.urlopen(rq, timeout=timeout) as r:
+            body = r.read(maxbody)
+            code = getattr(r, "status", 200) or 200
+            hs = {str(k).lower(): v for k, v in r.headers.items()}
+        return int((time.time() - t0) * 1000), code, body.decode("utf-8", "replace"), hs
+    except Exception:
+        return 0, 0, "", {}
+
+
+def _ipv4(text):
+    for m in IPV4_RE.finditer(text or ""):
+        ip = m.group(1)
+        try:
+            if all(0 <= int(x) <= 255 for x in ip.split(".")) and not ip.startswith(("0.", "127.", "255.")):
+                return ip
+        except Exception:
+            continue
+    return ""
+
+
+def _parallel(jobs, timeout=20.0):
+    """jobs=[(key, fn)]，并发执行，返回 {key: 结果 or None}"""
+    out = {}
+    lk = threading.Lock()
+
+    def run(k, fn):
+        try:
+            v = fn()
+        except Exception:
+            v = None
+        with lk:
+            out[k] = v
+
+    ths = [threading.Thread(target=run, args=(k, f), daemon=True) for k, f in jobs]
+    for th in ths:
+        th.start()
+    for th in ths:
+        th.join(timeout)
+    return out
+
+
+def _first_of(jobs, timeout=20.0):
+    """按顺序取第一个非空结果（保证可复现，不是谁先返回用谁）"""
+    res = _parallel(jobs, timeout)
+    for k, _ in jobs:
+        if res.get(k):
+            return res[k]
+    return None
+
+
+def _cn_one(name, url):
+    ms, code, body, hs = _http_probe(url, 7.0)
+    ip = _ipv4(body)
+    if not ip:
+        return None
+    loc = ""
+    try:
+        d = json.loads(body)
+        loc = " ".join(str(x) for x in (d.get("pro"), d.get("city"), d.get("addr")) if x)
+    except Exception:
+        k = body.find("来自于")
+        if k >= 0:
+            loc = body[k + 3:].split("：")[-1].strip()
+    return {"ip": ip, "loc": loc.strip()[:60], "src": name, "ms": ms}
+
+
+def _os_one(name, url):
+    ms, code, body, hs = _http_probe(url, 8.0)
+    try:
+        d = json.loads(body)
+    except Exception:
+        return None
+    if not isinstance(d, dict) or not d.get("ip"):
+        return None
+    bits = [d.get("country") or d.get("country_code") or "", d.get("city") or "",
+            d.get("isp") or d.get("company") or ""]
+    return {"ip": str(d.get("ip")),
+            "loc": (" ".join(str(x).strip() for x in bits if str(x).strip()))[:80],
+            "src": name, "ms": ms,
+            "asn": str(d.get("asn") or "")[:40],
+            "org": str(d.get("company") or d.get("isp") or "")[:60]}
+
+
+def net_info(force=False):
+    """三框：国内（直连出口）/ 国外（代理出口）/ 墙外（Google·推特·YouTube 可达性）"""
+    now = time.time()
+    with _NI_LOCK:
+        if not force and _NI_CACHE["d"] and now - _NI_CACHE["t"] < 90:
+            return _NI_CACHE["d"]
+    cn = _first_of([(n, (lambda n=n, u=u: _cn_one(n, u))) for n, u in CN_SRC], 10) or \
+        {"ip": "", "loc": "", "src": "", "ms": 0}
+    os_ = _first_of([(n, (lambda n=n, u=u: _os_one(n, u))) for n, u in OS_SRC], 11) or \
+        {"ip": "", "loc": "", "src": "", "ms": 0, "asn": "", "org": ""}
+    raw = _parallel([(n, (lambda u=u: _http_probe(u, 7.0)[0])) for n, u in WALL_SRC], 10)
+    wall = {n: int(raw.get(n) or 0) for n, _ in WALL_SRC}
+    d = {"cn": cn, "os": os_, "wall": wall, "ts": int(now)}
+    with _NI_LOCK:
+        _NI_CACHE["d"] = d
+        _NI_CACHE["t"] = now
+    return d
+
+
+def latency_all(force=False):
+    """8 个站点延迟（国内 4 走直连、国际 4 走代理），服务端实测"""
+    now = time.time()
+    with _NI_LOCK:
+        if not force and _LAT_CACHE["d"] and now - _LAT_CACHE["t"] < 60:
+            return _LAT_CACHE["d"]
+    res = _parallel([(i, (lambda u=u: _http_probe(u, 6.0)[0])) for i, (n, r, u) in enumerate(LAT_SITES)], 14)
+    items = []
+    for i, (n, r, u) in enumerate(LAT_SITES):
+        items.append({"name": n, "region": r, "ms": int(res.get(i) or 0)})
+    with _NI_LOCK:
+        _LAT_CACHE["d"] = items
+        _LAT_CACHE["t"] = now
+    return items
+
+
+def _geo_one(ip):
+    """单个 IP 的归属地（带缓存）"""
+    if not ip:
+        return {}
+    if ip in _GEO_CACHE:
+        return _GEO_CACHE[ip]
+    ms, code, body, hs = _http_probe("https://api.ipapi.is/?q=" + urllib.parse.quote(ip), 8.0)
+    try:
+        d = json.loads(body)
+    except Exception:
+        d = None
+    out = {}
+    if isinstance(d, dict) and d:
+        out = {"country": str(d.get("country") or d.get("country_code") or ""),
+               "city": str(d.get("city") or ""),
+               "region": str(d.get("region") or ""),
+               "asn": str(d.get("asn") or "")[:40],
+               "org": str(d.get("company") or "")[:60],
+               "lat": d.get("lat"), "lon": d.get("lon"),
+               "tz": str(d.get("timezone") or "")}
+        _GEO_CACHE[ip] = out
+    return out
+
+
+def _probe_ip(kind, url, host=""):
+    """按探针类型取「该站点看到的客户端 IP」，返回 (ip, 毫秒)"""
+    if kind == "trace":
+        ms, code, body, hs = _http_probe("https://%s/cdn-cgi/trace" % host, 7.5)
+        if code != 200:
+            return "", ms
+        for ln in (body or "").split("\n"):
+            if ln.startswith("ip="):
+                return ln[3:].strip(), ms
+        return "", ms
+    ms, code, body, hs = _http_probe(url, 7.5)
+    if kind == "header":
+        for k in ("x-request-ip", "cdn-user-ip", "x-real-ip", "x-client-ip", "cf-connecting-ip"):
+            if hs.get(k):
+                return str(hs[k]).strip(), ms
+        return _ipv4(body), ms
+    return _ipv4(body), ms
+
+
+def split_test(force=False):
+    """逐站点探测：对方看到你的 IP 是直连出口还是代理出口"""
+    now = time.time()
+    with _NI_LOCK:
+        if not force and _SPLIT_CACHE["d"] and now - _SPLIT_CACHE["t"] < 90:
+            return _SPLIT_CACHE["d"]
+    base = net_info(False)
+    cn_ip = (base.get("cn") or {}).get("ip") or ""
+    os_ip = (base.get("os") or {}).get("ip") or ""
+    jobs = []
+    for key, name, grp, kind, url, host in SPLIT_TARGETS:
+        jobs.append((key, (lambda k=kind, u=url, h=host: _probe_ip(k, u, h))))
+    got = _parallel(jobs, 26)
+    uniq = []
+    for key, name, grp, kind, url, host in SPLIT_TARGETS:
+        v = got.get(key) or ("", 0)
+        ip = (v[0] or "").strip()
+        if ip and ip not in uniq and len(uniq) < 6:
+            uniq.append(ip)
+    gres = _parallel([(ip, (lambda i=ip: _geo_one(i))) for ip in uniq], 18)
+    geo = {}
+    for ip in uniq:
+        geo[ip] = gres.get(ip) or _GEO_CACHE.get(ip) or {}
+    rows = []
+    for key, name, grp, kind, url, host in SPLIT_TARGETS:
+        v = got.get(key) or ("", 0)
+        ip, ms = (v[0] or "").strip(), int(v[1] or 0)
+        verdict = ""
+        if ip:
+            if cn_ip and ip == cn_ip:
+                verdict = "直连"
+            elif os_ip and ip == os_ip:
+                verdict = "代理"
+            else:
+                verdict = "其他"
+        g = geo.get(ip) or {}
+        rows.append({"key": key, "name": name, "group": grp, "ip": ip, "ms": ms,
+                     "verdict": verdict, "country": g.get("country") or "",
+                     "city": g.get("city") or "", "asn": g.get("asn") or ""})
+    d = {"rows": rows, "cn_ip": cn_ip, "os_ip": os_ip, "ts": int(now)}
+    with _NI_LOCK:
+        _SPLIT_CACHE["d"] = d
+        _SPLIT_CACHE["t"] = now
+    return d
+
+
+def ip_detail(ip):
+    """IP 详情（服务端代查，避免跨域与混合内容）"""
+    ip = re.sub(r"[^0-9A-Fa-f:.]", "", str(ip or ""))[:45]
+    if not ip:
+        return {"ip": "", "src": "", "raw": {}}
+    for name, tmpl in (("ipapi.is", "https://api.ipapi.is/?q=%s"),
+                       ("ip.sb", "https://api.ip.sb/geoip/%s")):
+        ms, code, body, hs = _http_probe(tmpl % urllib.parse.quote(ip), 9.0)
+        try:
+            d = json.loads(body)
+        except Exception:
+            d = None
+        if isinstance(d, dict) and d:
+            return {"ip": ip, "src": name, "raw": d}
+    return {"ip": ip, "src": "", "raw": {}}
+
+
 def detect_ip():
     """识别宿主 LAN IP。
     旁路由（TUN）模式下往外探测，源地址会变成隧道地址（198.18.x），
@@ -1922,6 +2209,14 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/settings":
                 return self._json({"ok": True, "settings": load_settings(),
                                    "ruleset_defaults": ruleset_defaults()})
+            if p == "/api/netinfo":
+                return self._json({"ok": True, "data": net_info("force" in args)})
+            if p == "/api/latency":
+                return self._json({"ok": True, "items": latency_all("force" in args)})
+            if p == "/api/splittest":
+                return self._json({"ok": True, "data": split_test("force" in args)})
+            if p == "/api/ipinfo":
+                return self._json({"ok": True, "data": ip_detail(args.get("ip"))})
             if p == "/api/logs":
                 return self._json({"ok": True, "log": tail_log(args.get("n", "120"))})
             if p == "/api/version":
@@ -2676,10 +2971,42 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 #upbox2 .box .err{color:#b42318}#upbox2 .box .warn{color:#b54708}#upbox2 .box .tip{color:#667085;font-size:12.5px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media(max-width:700px){.grid2{grid-template-columns:1fr}}
+.nig{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.nib{border:1px solid #e6e9ef;border-radius:10px;padding:10px 12px;background:#fbfcfe}
+.nib .t{font-weight:600;font-size:13px;color:#0f172a}
+.nib .t span{font-weight:400;font-size:11px;color:#94a3b8;margin-left:6px}
+.nib .v{font-family:ui-monospace,Consolas,monospace;font-size:15px;color:#2563eb;margin:6px 0 2px;word-break:break-all}
+.nib .v i{cursor:pointer;font-style:normal;color:#94a3b8;margin-left:5px;font-size:13px}
+.nib .l{font-size:12px;color:#475569}
+.nib .l2{font-size:12px;color:#94a3b8;margin-top:2px}
+.nich{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:8px;margin-top:10px}
+.nic2{border:1px solid #e6e9ef;border-radius:9px;padding:8px 10px;display:flex;align-items:center;gap:8px;font-size:12px;background:#fff}
+.nic2 svg{width:20px;height:20px;flex:0 0 auto}
+.nic2 .nm{flex:1 1 auto;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#334155}
+.nic2 .rg{font-size:10px;color:#94a3b8;margin-left:4px}
+.nic2 b{font-family:ui-monospace,Consolas,monospace;font-size:13px;margin-left:auto}
+.g2{color:#16a34a}.y2{color:#d97706}.r2{color:#dc2626}.w2{color:#94a3b8}
+.vd{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;border:1px solid #cbd5e1;color:#475569}
+.vd.d{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
+.vd.p{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+.vd.o{background:#fef3c7;border-color:#fde68a;color:#92400e}
+#ipm{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(15,23,42,.55);display:none;z-index:99;align-items:center;justify-content:center;padding:14px}
+#ipm.on{display:flex}
+.ipmb{background:#fff;border-radius:14px;max-width:920px;width:100%;max-height:93vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.ipmh{display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid #eef1f5;font-weight:600;font-size:15px}
+.ipmh .src{font-weight:400;font-size:12px;color:#94a3b8}
+.ipmh button{margin-left:auto;border:0;background:#f1f5f9;border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;line-height:1}
+#ipmm{height:320px;background:#eef3f8}
+.ipmi{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:12px;padding:14px 16px}
+.ipmi h3{font-size:13px;margin:0 0 6px;color:#0f172a}
+.ipmi table{width:100%;font-size:13px;border-collapse:collapse}
+.ipmi td{padding:5px 0;border-bottom:1px dashed #eef1f5;vertical-align:top}
+.ipmi td:first-child{color:#64748b;width:104px}
+.ok2{color:#047857;font-weight:600}.no2{color:#cbd5e1}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.5</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.6</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -2695,6 +3022,11 @@ th{color:#475467;font-weight:600;font-size:12.5px}
     <button class="btn" onclick="gen()">立即更新配置</button></h2>
    <div class=kv id=kv></div>
    <div id=kupd></div></div>
+  <div class=card><h2>🌍 当前网络信息 <span class=sp></span>
+    <button class=btn2 onclick="niLoad(1)">刷新</button></h2>
+   <div id=ni></div>
+   <div id=nil></div>
+   <div class=hint>国内测试走<b>直连</b>，国外 / 墙外走<b>代理</b>（都是面板所在群晖的真实出口）；延迟为群晖经 mihomo 实测；点 🔍 看该 IP 的归属地与地图。</div></div>
   <div class=card><h2>🩺 健康自检（7 项）</h2><table><tbody id=hc></tbody></table>
    <div class=hint>健康自检会真实尝试：容器状态、配置校验、经代理出网、面板接口、磁盘、程序文件、定时任务。</div></div>
   <div class=card><h2>📦 代理提供者（机场）</h2><table>
@@ -2739,6 +3071,11 @@ th{color:#475467;font-weight:600;font-size:12.5px}
    <div style="margin-top:10px"><button class=btn onclick="crAdd()">➕ 添加一行</button>
     <span class=hint style="margin-left:8px">域名写 <code>example.com</code> 就行（自动包含它自己和所有子域）；去向可选 <b>直连</b> / <b>代理（漏网之鱼）</b> / 任意地区组或自定义组。改完点下面「保存策略并生成配置」✓</span></div>
    <div class=hint>这条规则排在规则集<b>前面</b>，所以优先级最高：选了直连就一定直连，选了某个组就一定走那个组。</div></div>
+
+  <div class=card><h2>🧪 分流测试 <span class=sp></span>
+    <button class=btn2 onclick="stLoad(1)">开始测试</button></h2>
+   <table><thead><tr><th>站点</th><th>分组</th><th>看到你的 IP</th><th>判定</th><th>归属地</th><th>ASN</th><th>延迟</th></tr></thead><tbody id=st></tbody></table>
+   <div class=hint id=sth>点「开始测试」：逐个站点探测「对方看到的你的 IP」，再与直连出口 / 代理出口比对，判定它实际走了直连还是代理。</div></div>
 
   <div class=card><h2>🧭 规则集分流</h2>
    <div id=rs></div>
@@ -5436,6 +5773,173 @@ function rsRender(){
 function rsAdd(){ RSC.push({key:'',url:'',behavior:'domain',target:'漏网之鱼'}); rsRender(); }
 function rsDel(i){ RSC.splice(i,1); rsRender(); }
 function rsReset(){ RSU={}; rsRender(); }
+
+var ICI={'字节抖音':'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#1677FF" d="m19.9 1.5 4.1 1v19l-4.1 1zM6.5 10.9l4.1 1v9l-4 1.1zM0 2.6l4.1 1v16.8l-4.1 1zm17.5 5.6v11.1l-4.2-1v-9z"></path></svg>','Bilibili':'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#FB7299" d="M17.813 4.653h.854q2.266.08 3.773 1.574Q23.946 7.72 24 9.987v7.36q-.054 2.266-1.56 3.773c-1.506 1.507-2.262 1.524-3.773 1.56H5.333q-2.266-.054-3.773-1.56C.053 19.614.036 18.858 0 17.347v-7.36q.054-2.267 1.56-3.76t3.773-1.574h.774l-1.174-1.12a1.23 1.23 0 0 1-.373-.906q0-.534.373-.907l.027-.027q.4-.373.92-.373t.92.373L9.653 4.44q.107.106.187.213h4.267a.8.8 0 0 1 .16-.213l2.853-2.747q.4-.373.92-.373c.347 0 .662.151.929.4s.391.551.391.907q0 .532-.373.906zM5.333 7.24q-1.12.027-1.88.773q-.76.748-.786 1.894v7.52q.026 1.146.786 1.893t1.88.773h13.334q1.12-.026 1.88-.773t.786-1.893v-7.52q-.026-1.147-.786-1.894t-1.88-.773zM8 11.107q.56 0 .933.373q.375.374.4.96v1.173q-.025.586-.4.96q-.373.375-.933.374c-.56-.001-.684-.125-.933-.374q-.375-.373-.4-.96V12.44q0-.56.386-.947q.387-.386.947-.386m8 0q.56 0 .933.373q.375.374.4.96v1.173q-.025.586-.4.96q-.373.375-.933.374c-.56-.001-.684-.125-.933-.374q-.375-.373-.4-.96V12.44q.025-.586.4-.96q.373-.373.933-.373"></path></svg>','腾讯微信':'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#09B83E" d="M8.7 2.19C3.9 2.19 0 5.48 0 9.53c0 2.21 1.17 4.2 3 5.55a.6.6 0 0 1 .21.66l-.39 1.48q-.03.11-.04.22c0 .16.13.3.29.3a.3.3 0 0 0 .16-.06l1.9-1.11a.9.9 0 0 1 .72-.1 10 10 0 0 0 2.84.4q.41-.01.81-.05a5.85 5.85 0 0 1 1.93-6.45 8.3 8.3 0 0 1 5.86-1.83c-.58-3.59-4.2-6.35-8.6-6.35m-2.9 3.8c.64 0 1.16.53 1.16 1.18a1.17 1.17 0 0 1-1.16 1.18 1.17 1.17 0 0 1-1.17-1.18c0-.65.52-1.18 1.17-1.18m5.8 0c.65 0 1.17.53 1.17 1.18a1.17 1.17 0 0 1-1.16 1.18 1.17 1.17 0 0 1-1.16-1.18c0-.65.52-1.18 1.16-1.18m5.34 2.87a8 8 0 0 0-5.28 1.78 5.5 5.5 0 0 0-1.78 6.22c.94 2.46 3.66 4.23 6.88 4.23q1.25 0 2.36-.33a.7.7 0 0 1 .6.08l1.59.93.14.04c.13 0 .24-.1.24-.24q-.01-.09-.04-.18l-.33-1.23-.02-.16a.5.5 0 0 1 .2-.4 5.8 5.8 0 0 0 2.5-4.62c0-3.21-2.93-5.84-6.66-6.09zm-2.53 3.27c.53 0 .97.44.97.98a1 1 0 0 1-.97.99 1 1 0 0 1-.97-.99c0-.54.43-.98.97-.98zm4.84 0c.54 0 .97.44.97.98a1 1 0 0 1-.97.99 1 1 0 0 1-.97-.99c0-.54.44-.98.97-.98"></path></svg>','阿里淘宝':'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#E16322" d="M21.31 9.9a3 3 0 1 1 0 1.92.96.96 0 0 1 0-1.92m2.39 3.05H13.3v-.96h4.14V9.76h-2.89v-.77h2.9v-.92h-2.52v.2H13.3v-2.9h1.64v.35l2.52-.3V4.6h1.85v.64c.93-.08 1.76-.13 2.21-.1 1.5.06 2.45.27 2.49 1.26.03 1-1.43 1.9-1.43 1.9l-.45-.43v.2h-2.8v.92h3.22v.77h-3.23v2.23h4.39zM21.53 7.3l-.02-.01s1.38-.76.35-1.27c-.87-.43-5.54.3-6.93.62v.66zM1.88 6.42a1 1 0 0 0 0-2 1 1 0 0 0-1 1 1 1 0 0 0 1 1m3.41-.86a7 7 0 0 0 .37-.72L4.2 4.42s-.6 1.93-1.65 2.83c0 0 1.02.6 1.01.58a10 10 0 0 0 .78-.88l.68-.3a9 9 0 0 1-1.14 1.69l.61.54s.42-.4.88-.9h.53v.9H3.86v.73H5.9v1.72h-.08c-.23-.01-.58-.05-.71-.27-.17-.26-.05-.75-.04-1.04h-1.4l-.06.02s-.52 2.32 1.5 2.27a5.3 5.3 0 0 0 3.46-.92l.2.76 1.17-.48-.79-1.92-.94.3.18.65a3 3 0 0 1-.82.42V9.6h2v-.72h-2v-.9h2v-.72H6.01c.26-.31.46-.6.51-.78l-.62-.17c2.67-.95 4.15-.79 4.13.77v4.12s.16 1.4-1.46 1.3l-.87-.18-.21.83s3.78 1.08 4.1-1.82-.09-4.76-.09-4.76-.34-2.68-6.2-1.02zm-5.23 6.6 1.58.98c1.1-2.38 1.03-2.06 1.3-2.92.29-.87.35-1.54-.13-2.02a10 10 0 0 0-1.6-1.36L.55 7.86l1.21.75s.82.42.43 1.2c-.36.73-2.13 2.34-2.13 2.34M20 19s-.02.53-.67.53c-.6 0-.64-.42-.64-.42q-.39.45-1.07.46c-.76 0-1.3-.51-1.3-1.3 0-.78.56-1.27 1.4-1.27.39 0 .73.15.93.4l.01-.2c0-.56-.3-.8-1-.8q-.51 0-1.02.13.16-.33.3-.45.18-.14.94-.14c1.27 0 1.74.42 1.74 1.42v1.2c0 .32.03.44.38.44m-1.33-.74c0-.48-.25-.75-.64-.75-.4 0-.66.28-.66.76 0 .47.27.76.65.76.39 0 .65-.27.65-.77m5.27-.5c0 1.15-.7 1.82-1.78 1.82-1.1 0-1.77-.67-1.77-1.82 0-1.16.68-1.83 1.77-1.83s1.78.67 1.78 1.83m-1.08 0q0-1.3-.7-1.3t-.69 1.3.7 1.3.69-1.3m-7.14-.05c0 1.17-.65 1.86-1.57 1.86q-.66-.01-1.05-.47s-.1.42-.66.42c-.69 0-.67-.52-.67-.52.4.02.38-.21.38-.43v-2.89c0-.36-.07-.48-.43-.49.02-.1.08-.53.68-.53.82 0 .76.91.76.91v.79q.34-.4 1-.4c.96 0 1.56.65 1.56 1.75m-1.09.08q-.01-1.35-.76-1.35c-.44 0-.74.4-.74 1.1v.36c0 .72.31 1.12.76 1.12q.73 0 .74-1.23m-3.24-.03c0 1.15-.7 1.82-1.78 1.82-1.1 0-1.78-.67-1.78-1.82 0-1.16.68-1.83 1.78-1.83s1.78.67 1.78 1.83m-1.09 0q0-1.3-.7-1.3-.69 0-.68 1.3t.69 1.3q.7 0 .7-1.3m-6-2.72q-.4.11-1.55.1-1.38-.02-1.85-.04c-.52 0-.73.13-.91.66q.45-.13 1.13-.11c.36 0 .42.04.42.3v2.9c0 .28.11.67.72.67.71 0 .84-.52.84-.52-.36 0-.43-.13-.43-.49v-2.56c0-.27.1-.28.47-.28h.26c.55 0 .7-.1.9-.63M7.46 19s-.02.52-.67.52c-.56 0-.64-.4-.64-.4q-.39.45-1.07.45c-.76 0-1.3-.52-1.3-1.3S4.33 17 5.17 17c.39 0 .73.14.93.4v-.2c0-.56-.3-.8-1-.8q-.5 0-1.01.13.15-.33.3-.46.17-.14.94-.14c1.26 0 1.74.43 1.74 1.43v1.2c0 .32.03.44.38.44m-1.33-.75c0-.48-.26-.74-.64-.74-.4 0-.67.28-.67.76 0 .46.28.76.66.76.39 0 .65-.28.65-.78"></path></svg>','GitHub':'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#181717" d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.8 1.3 3.49 1 .1-.78.42-1.31.76-1.61-2.66-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.7 4.7 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3"></path></svg>','Telegram.DC5':'<svg width="24px" height="24px" viewBox="0 0 16 16" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><defs><linearGradient x1="50%" y1="0%" x2="50%" y2="100%" id="linearGradient-1"><stop stop-color="#38AEEB" offset="0%"></stop><stop stop-color="#279AD1" offset="100%"></stop></linearGradient></defs><g id="Artboard" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><circle id="Oval" fill="url(#linearGradient-1)" cx="8" cy="8" r="8"></circle><path d="M3.17026167,7.83635602 C5.78750201,6.74265999 7.53273882,6.02162863 8.40597211,5.67326193 C10.8992306,4.67860423 11.2454541,4.53439191 11.5831299,4.52864956 C11.6573986,4.52743168 11.8385417,4.55776042 11.9798438,4.67645833 C12.1211458,4.79515625 12.1635786,4.87206678 12.1755371,4.93908691 C12.1874957,5.00610705 12.1862759,5.21456762 12.1744385,5.3338623 C12.0393279,6.69547283 11.5259342,9.83829771 11.2285121,11.3633248 C11.1026617,12.008621 10.8548582,12.2249854 10.6149558,12.2461596 C10.0935924,12.2921758 9.69769267,11.9156852 9.19272668,11.5981993 C8.40255458,11.1013965 8.13911734,10.9180161 7.3721185,10.4332283 C6.48571864,9.87297217 6.85080034,9.6784879 7.35595703,9.17524981 C7.48815894,9.04355001 9.67825076,7.04590073 9.71077046,6.86250183 C9.7391276,6.70257812 9.7494847,6.68189389 9.67664063,6.60973958 C9.60379655,6.53758527 9.51674192,6.54658941 9.46083149,6.55876051 C9.38158015,6.57601267 8.17521836,7.33962686 5.84174612,8.84960308 C5.48344358,9.08558775 5.15890428,9.20056741 4.86812819,9.19454205 C4.54757089,9.18789957 3.93094724,9.02070014 3.47255094,8.87778221 C2.91030922,8.70248755 2.46345069,8.609808 2.50236203,8.31210343 C2.52262946,8.15704047 2.74526267,7.998458 3.17026167,7.83635602 Z" id="Path-3" fill="#FFFFFF"></path></g></svg>','X.com':'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#1DA1F2" d="M23.643 4.937c-.835.37-1.732.62-2.675.733.962-.576 1.7-1.49 2.048-2.578-.9.534-1.897.922-2.958 1.13-.85-.904-2.06-1.47-3.4-1.47-2.572 0-4.658 2.086-4.658 4.66 0 .364.042.718.12 1.06-3.873-.195-7.304-2.05-9.602-4.868-.4.69-.63 1.49-.63 2.342 0 1.616.823 3.043 2.072 3.878-.764-.025-1.482-.234-2.11-.583v.06c0 2.257 1.605 4.14 3.737 4.568-.392.106-.803.162-1.227.162-.3 0-.593-.028-.877-.082.594 1.85 2.323 3.196 4.368 3.233-1.595 1.25-3.604 1.995-5.786 1.995-.376 0-.747-.022-1.112-.065 2.072 1.328 4.532 2.104 7.172 2.104 8.607 0 13.3-7.132 13.3-13.3 0-.202-.005-.403-.014-.602.913-.66 1.706-1.477 2.332-2.41z"></path></svg>','YouTube':'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#FF0000" d="M23.5 6.19a3 3 0 0 0-2.12-2.14c-1.87-.5-9.38-.5-9.38-.5s-7.5 0-9.38.5A3 3 0 0 0 .5 6.19C0 8.07 0 12 0 12s0 3.93.5 5.81a3 3 0 0 0 2.12 2.14c1.87.5 9.38.5 9.38.5s7.5 0 9.38-.5a3 3 0 0 0 2.12-2.14C24 15.93 24 12 24 12s0-3.93-.5-5.81M9.55 15.57V8.43L15.82 12z"></path></svg>'};
+var NI=null,NI_ONCE=0,ST=null,IPMAP=null;
+function niBox(tit,sub,ip,loc,line){
+  var h='<div class=nib><div class=t>'+esc(tit)+'<span>'+esc(sub||'')+'</span></div>';
+  h+='<div class=v>'+esc(ip||'—');
+  if(ip){ h+='<i data-ip="'+esc(ip)+'" title="查询这个 IP 的详细信息">🔍</i>'; }
+  h+='</div><div class=l>'+esc(loc||'—')+'</div>';
+  if(line){ h+='<div class=l2>'+line+'</div>'; }
+  return h+'</div>';
+}
+function niLoad(force){
+  var b=document.getElementById('ni'), l=document.getElementById('nil');
+  if(b){ b.innerHTML='<div class=hint>检测中…（国内走直连、国外走代理，约几秒）</div>'; }
+  fetch('/api/netinfo'+(force?'?force=1':'')).then(function(r){return r.json()}).then(function(d){
+    NI=d.data||{}; niRender();
+  }).catch(function(){ if(b){ b.innerHTML='<div class=hint>检测失败（网络不通？）</div>'; } });
+  if(l){ l.innerHTML='<div class=hint>测延迟中…</div>'; }
+  fetch('/api/latency'+(force?'?force=1':'')).then(function(r){return r.json()}).then(function(d){
+    nilRender(d.items||[]);
+  }).catch(function(){ if(l){ l.innerHTML=''; } });
+}
+function niRender(){
+  var b=document.getElementById('ni');
+  if(!b){ return; }
+  var d=NI||{}, cn=d.cn||{}, os=d.os||{}, w=d.wall||{}, k;
+  var wh='';
+  for(k in w){ wh+=(wh?'　':'')+esc(k)+(w[k]?' ✓':' ✗'); }
+  var h='<div class=nig>';
+  h+=niBox('国内测试', cn.src||'CN-Test', cn.ip, cn.loc, '· 你访问国内站点使用的 IP');
+  h+=niBox('国外测试', os.src||'漏网之鱼', os.ip, ((os.loc||'')+(os.asn?('　'+os.asn):'')), '· 你访问国外站点使用的 IP');
+  h+=niBox('墙外测试', 'Google / 推特 / YouTube', os.ip, (os.loc||''), '· '+wh);
+  h+='</div>';
+  b.innerHTML=h;
+  var ms=b.querySelectorAll('i[data-ip]'), i;
+  for(i=0;i<ms.length;i++){ (function(el){ el.onclick=function(){ ipShow(el.getAttribute('data-ip')); }; })(ms[i]); }
+}
+function nilRender(items){
+  var l=document.getElementById('nil');
+  if(!l){ return; }
+  var h='<div class=nich>', i, it, ms, cls;
+  for(i=0;i<items.length;i++){
+    it=items[i]; ms=it.ms||0;
+    cls = ms===0 ? 'w2' : (ms<120 ? 'g2' : (ms<400 ? 'y2' : 'r2'));
+    h+='<div class=nic2>'+(ICI[it.name]||'')+'<span class=nm>'+esc(it.name)+'<span class=rg>'+esc(it.region||'')+'</span></span>'
+      +'<b class='+cls+'>'+(ms?(ms+'ms'):'✗')+'</b></div>';
+  }
+  h+='</div>';
+  l.innerHTML=h;
+}
+function stLoad(force){
+  var b=document.getElementById('st'), hh=document.getElementById('sth');
+  if(b){ b.innerHTML='<tr><td colspan=7>测试中…（并发探测 17 个站点，约 10~25 秒）</td></tr>'; }
+  fetch('/api/splittest'+(force?'?force=1':'')).then(function(r){return r.json()}).then(function(d){
+    ST=d.data||{}; stRender();
+  }).catch(function(){ if(b){ b.innerHTML='<tr><td colspan=7>测试失败</td></tr>'; } });
+}
+function stRender(){
+  var b=document.getElementById('st');
+  if(!b){ return; }
+  var rows=(ST||{}).rows||[], h='', i, r, cls;
+  for(i=0;i<rows.length;i++){
+    r=rows[i];
+    cls = r.verdict==='直连' ? 'd' : (r.verdict==='代理' ? 'p' : 'o');
+    h+='<tr><td>'+esc(r.name)+'</td><td>'+esc(r.group||'')+'</td>'
+      +'<td>'+(r.ip ? esc(r.ip)+' <i data-ip="'+esc(r.ip)+'" style="cursor:pointer;font-style:normal;color:#94a3b8">🔍</i>' : '<span class=hint>获取失败</span>')+'</td>'
+      +'<td>'+(r.verdict ? '<span class="vd '+cls+'">'+esc(r.verdict)+'</span>' : '—')+'</td>'
+      +'<td>'+esc(r.country||'')+(r.city?'<div class=l2>'+esc(r.city)+'</div>':'')+'</td>'
+      +'<td>'+esc(r.asn||'—')+'</td>'
+      +'<td>'+(r.ms ? r.ms+'ms' : '—')+'</td></tr>';
+  }
+  b.innerHTML=h||'<tr><td colspan=7>没有结果</td></tr>';
+  var sth=document.getElementById('sth');
+  if(sth){
+    sth.innerHTML='基准：直连出口 <code>'+esc((ST||{}).cn_ip||'未测出')+'</code>　代理出口 <code>'+esc((ST||{}).os_ip||'未测出')+'</code>';
+  }
+  var ms=b.querySelectorAll('i[data-ip]'), j;
+  for(j=0;j<ms.length;j++){ (function(el){ el.onclick=function(){ ipShow(el.getAttribute('data-ip')); }; })(ms[j]); }
+}
+function ipShow(ip){
+  var m=document.getElementById('ipm');
+  if(!m||!ip){ return; }
+  m.classList.add('on');
+  var s=document.getElementById('ipm-src'), mp=document.getElementById('ipmm'), inf=document.getElementById('ipmi');
+  if(s){ s.textContent='查询中…'; }
+  if(mp){ mp.innerHTML=''; }
+  if(inf){ inf.innerHTML='<div class=hint>正在查询…</div>'; }
+  fetch('/api/ipinfo?ip='+encodeURIComponent(ip)).then(function(r){return r.json()}).then(function(d){
+    ipFill(ip,d.data||{});
+  }).catch(function(){ if(inf){ inf.innerHTML='<div class=hint>查询失败</div>'; } });
+}
+function ipHide(){
+  var m=document.getElementById('ipm');
+  if(m){ m.classList.remove('on'); }
+  if(IPMAP){ try{ IPMAP.remove(); }catch(e){} IPMAP=null; }
+}
+function ipNum(v){ var n=parseFloat(v); return isNaN(n)?0:n; }
+function ipFill(ip,data){
+  var r=(data||{}).raw||{}, src=(data||{}).src||'';
+  var s=document.getElementById('ipm-src');
+  if(s){ s.textContent = src ? ('数据来源：'+src) : '未取到数据'; }
+  var country=r.country||r.country_code||'', city=r.city||'', region=r.region||'';
+  var org=r.company||r.isp||r.org||r.organization||r.as_name||'';
+  var asn=r.asn||r.asn_num||'', tz=r.timezone||'';
+  var lat=ipNum(r.lat||r.latitude), lon=ipNum(r.lon||r.longitude);
+  var geo=[country,region,city].filter(function(x){return !!x;}).join(' ');
+  var h='<div><h3>📍 基本信息</h3><table>'
+    +'<tr><td>IP 地址</td><td>'+esc(ip)+'</td></tr>'
+    +'<tr><td>地理位置</td><td>'+esc(geo||'未知')+'</td></tr>'
+    +'<tr><td>时区</td><td>'+esc(tz||'未知')+'</td></tr>'
+    +'<tr><td>运营商</td><td>'+esc(org||'未知')+'</td></tr>'
+    +'<tr><td>ASN</td><td>'+esc(String(asn)||'未知')+'</td></tr>'
+    +'</table></div>';
+  var sec=[['数据中心','is_datacenter'],['代理服务器','is_proxy'],['VPN 连线','is_vpn'],
+           ['Tor 网络','is_tor'],['网络爬虫','is_crawler'],['移动网络','is_mobile'],
+           ['卫星网络','is_satellite'],['已知滥用','is_abuser'],['保留地址','is_bogon']];
+  var rows='', n=0, i, v;
+  for(i=0;i<sec.length;i++){
+    v=r[sec[i][1]];
+    if(v===undefined||v===null){ continue; }
+    n++;
+    rows+='<tr><td>'+esc(sec[i][0])+'</td><td class="'+(v?'no2':'ok2')+'">'+(v?'是':'否')+'</td></tr>';
+  }
+  var risk=r.risk;
+  if(risk!==undefined&&risk!==null&&risk!==''){
+    n++;
+    var rv=ipNum(risk);
+    rows+='<tr><td>风控评级</td><td>'+esc(String(rv))+'</td></tr>';
+  }
+  if(n){ h+='<div><h3>🛡 安全检测</h3><table>'+rows+'</table>'
+    +'<div class=hint style="margin-top:6px">'+(src==='ipapi.is'?'免费档不一定返回全部项，缺失的不会显示':'')+'</div></div>'; }
+  var inf=document.getElementById('ipmi');
+  if(inf){ inf.innerHTML=h; }
+  var tip='<b>'+esc(city||region||country||ip)+'</b><br>落地IP: '+esc(ip)+(asn?('<br>ASN: '+esc(String(asn))):'')+(org?('<br>'+esc(org)):'');
+  ipMap(lat,lon,tip);
+}
+function ipMap(lat,lon,tip){
+  var mp=document.getElementById('ipmm');
+  if(!mp){ return; }
+  if(!window.L){
+    mp.innerHTML='<div class=hint style="padding:16px">地图库加载中…</div>';
+    var css=document.createElement('link');
+    css.rel='stylesheet';
+    css.href='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(css);
+    var sc=document.createElement('script');
+    sc.src='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
+    sc.onload=function(){ ipMap(lat,lon,tip); };
+    sc.onerror=function(){
+      var t2=document.createElement('script');
+      t2.src='https://fastly.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
+      t2.onload=function(){ ipMap(lat,lon,tip); };
+      t2.onerror=function(){ mp.innerHTML='<div class=hint style="padding:16px">地图库加载失败（无外网或被拦）</div>'; };
+      document.head.appendChild(t2);
+    };
+    document.head.appendChild(sc);
+    return;
+  }
+  if(!lat||!lon){ mp.innerHTML='<div class=hint style="padding:16px">这个 IP 没有经纬度，无法画地图</div>'; return; }
+  if(IPMAP){ try{ IPMAP.remove(); }catch(e){} IPMAP=null; }
+  mp.innerHTML='';
+  IPMAP=L.map(mp).setView([lat,lon],10);
+  L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+    {subdomains:'1234',maxZoom:18,attribution:'高德地图'}).addTo(IPMAP);
+  L.marker([lat,lon]).addTo(IPMAP).bindPopup(tip).openPopup();
+  setTimeout(function(){ try{ IPMAP.invalidateSize(); }catch(e){} },150);
+}
 function ipDetect(){ fetch('/api/ip').then(r=>r.json()).then(function(d){ if(d.ip){$('#t_ip').value=d.ip;$('#t_ab').value=d.ip;} }); }
 function applyAll(){ apiPost('/api/apply',{},0); }
 function kdRestart(){ if(!confirm('重启内核容器 mihomo？')) return; apiPost('/api/kernel-restart',{},0); }
@@ -5597,7 +6101,11 @@ loadStatus();
    <button onclick="document.getElementById('mhui').style.display='none'" style="float:right;margin-top:8px;padding:2px 10px;border:1px solid #30363d;border-radius:6px;background:#21262d;color:#c9d1d9;cursor:pointer">关闭 ✕</button>
  </div>
  <iframe id=mhuiF style="width:100%;height:calc(100% - 38px);border:0"></iframe>
-</div>
+</div><div id=ipm><div class=ipmb>
+  <div class=ipmh>🔍 IP 详细信息 <span class=src id=ipm-src></span><button onclick="ipHide()">×</button></div>
+  <div id=ipmm></div>
+  <div class=ipmi id=ipmi></div>
+</div></div>
 </body></html>
 """
 
