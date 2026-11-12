@@ -31,7 +31,14 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.9.6"
+# 统一本地时区：容器默认是 UTC，会让日志、自检时间比本地差 8 小时
+try:
+    os.environ["TZ"] = "Asia/Shanghai"
+    time.tzset()
+except Exception:  # noqa: BLE001
+    pass
+
+APP_VERSION = "2.9.7"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -3434,7 +3441,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
   <div class=hmid>
    <span class=mk><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.2v5.9c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6.2z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.6"/></svg></span>
    <h1>mihomo 网页管理台<small>群晖 NAS · 单端口旁路由</small></h1>
-   <span class="pill" id=ver>v2.9.6</span>
+   <span class="pill" id=ver>v2.9.7</span>
    <span class="pill gray2" id=hd>群晖 NAS</span>
    <button id=mhuiBtn class=nodes onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()">节点面板（内嵌）</button>
   </div>
@@ -3473,8 +3480,13 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
    </div>
   </div>
 
-  <div class=card><h2><span class="ic ic-r"><svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-9a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 4.6-7 9-7 9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M8 12h2l1.5-2 2 4 1.5-2h1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 健康自检（7 项）</h2><table><tbody id=hc></tbody></table>
-   <div class=hint>健康自检会真实尝试：容器状态、配置校验、经代理出网、面板接口、磁盘、程序文件、定时任务。</div></div>
+  <div class=card><h2><span class="ic ic-r"><svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-9a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 4.6-7 9-7 9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M8 12h2l1.5-2 2 4 1.5-2h1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 健康自检<span id=hccount></span> <span class=sp></span>
+    <button class=btn2 data-body=hcbody onclick="colToggle(this)">展开</button>
+    <button class=btn2 id=hcbtn onclick="hcLoad(1)">重新自检</button></h2>
+   <div class="colbody" id=hcbody><table><tbody id=hc></tbody></table>
+   <div class=hint>健康自检会真实尝试：容器状态、配置校验、经代理出网、面板接口、磁盘、程序文件、定时任务。</div>
+   </div>
+  </div>
   <div class=card><h2><span class="ic ic-k"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v10l-8 4-8-4V7z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M4 7l8 4 8-4M12 11v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span> 代理提供者（机场） <span class=sp></span>
     <button class=btn2 data-body=pvbody onclick="colToggle(this)">展开</button></h2>
    <div class="colbody" id=pvbody><table>
@@ -5961,6 +5973,23 @@ var KVIC={
  pa:'<svg viewBox="0 0 24 24"><path d="M9 3v6M15 3v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M6 9h12v3a6 6 0 0 1-12 0z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M12 18v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
  ui:'<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>'
 };
+function hcRender(d){
+  var h=(d.items||[]).map(function(i){
+    return '<tr><td style="width:32px">'+(i.ok?'<span class=pill>通过</span>':'<span class="pill bad">异常</span>')+
+           '</td><td style="width:150px">'+esc(i.name)+'</td><td>'+esc(i.detail)+'</td></tr>'}).join('');
+  var b=document.getElementById('hc');
+  if(b){ b.innerHTML=h+'<tr><td colspan=3><b>共 '+esc(d.passed)+'/'+esc(d.total)+' 项通过</b>（'+esc(d.time)+'）</td></tr>'; }
+  var c=document.getElementById('hccount');
+  if(c){ c.textContent='（'+esc(d.total)+' 项）'; }
+}
+function hcLoad(force){
+  var btn=document.getElementById('hcbtn');
+  if(force && btn){ btn.textContent='自检中…'; btn.disabled=true; }
+  var back=function(){ if(force && btn){ btn.textContent='重新自检'; btn.disabled=false; } };
+  fetch('/api/health?t='+Date.now()).then(function(r){ return r.json(); }).then(function(d){
+    hcRender(d); back();
+  }).catch(back);
+}
 function loadStatus(){
   fetch('/api/status').then(r=>r.json()).then(d=>{
     $('#wp').style.display = d.weak_pass ? 'block' : 'none';
@@ -5983,12 +6012,7 @@ function loadStatus(){
           ? '<div class=hint style="margin-top:8px">内核已是最新（最新 '+esc(ku.latest)+'）　<button class=btn2 onclick="chkKernel()">重新检查更新</button></div>'
           : '<div class=hint style="margin-top:8px">正在检查内核最新版本…　<button class=btn2 onclick="chkKernel()">重新检查</button></div>');
   });
-  fetch('/api/health').then(r=>r.json()).then(function(d){
-    var h=(d.items||[]).map(function(i){
-      return '<tr><td style="width:32px">'+(i.ok?'<span class=pill>通过</span>':'<span class="pill bad">异常</span>')+
-             '</td><td style="width:150px">'+esc(i.name)+'</td><td>'+esc(i.detail)+'</td></tr>'}).join('');
-    $('#hc').innerHTML=h+'<tr><td colspan=3><b>共 '+esc(d.passed)+'/'+esc(d.total)+' 项通过</b>（'+esc(d.time)+'）</td></tr>';
-  });
+  hcLoad(0);
 }
 function loadAirports(){
   fetch('/api/settings').then(r=>r.json()).then(function(d){
