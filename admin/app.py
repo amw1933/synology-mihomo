@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.6"
+APP_VERSION = "2.6.1"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1631,9 +1631,21 @@ def _http_probe(url, timeout=7.0, maxbody=32768):
             body = r.read(maxbody)
             code = getattr(r, "status", 200) or 200
             hs = {str(k).lower(): v for k, v in r.headers.items()}
-        return int((time.time() - t0) * 1000), code, body.decode("utf-8", "replace"), hs
+        return int((time.time() - t0) * 1000), code, _dec(body), hs
     except Exception:
         return 0, 0, "", {}
+
+
+def _dec(raw):
+    """探测回来的正文解码：先 UTF-8，失败再按 GB18030（太平洋等国内站返回 GBK）"""
+    if not raw:
+        return ""
+    for enc in ("utf-8", "gb18030"):
+        try:
+            return raw.decode(enc)
+        except Exception:
+            continue
+    return raw.decode("utf-8", "replace")
 
 
 def _ipv4(text):
@@ -3006,7 +3018,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.6</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.6.1</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
