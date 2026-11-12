@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "1.8"
+APP_VERSION = "1.9"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -2365,7 +2365,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v1.8</span>
+ <span class="pill" id=ver style="background:#3b82f6">v1.9</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -2804,14 +2804,23 @@ function sbRender(){
       +(it.enable?'<span class="pill" style="background:#12b76a">启用</span>':'<span class="pill" style="background:#98a2b3">已停用</span>')
       +'<span class=hint>'+esc((it.urls||[]).length)+' 个来源'+((it.regions&&it.regions.length)?' · 地区：'+esc(it.regions.join('/')):'')+'</span>'
       +'<span class=sp></span>'
-      +'<button class=btn2 onclick="sbToggle(\''+it.token+'\','+(it.enable?0:1)+')">'+(it.enable?'停用':'启用')+'</button>'
-      +'<button class="btn2 red" onclick="sbDel(\''+it.token+'\')">删除</button>'
+      +'<button class=btn2 data-act=toggle data-tok="'+esc(it.token)+'" data-en="'+(it.enable?1:0)+'">'+(it.enable?'停用':'启用')+'</button>'
+      +'<button class="btn2 red" data-act=del data-tok="'+esc(it.token)+'">删除</button>'
       +'</div>'
-      +'<div class=hint style="margin-top:8px;word-break:break-all">Clash：<code>'+esc(l1)+'</code> <button class=btn2 onclick="sbCopy(\''+esc(l1)+'\')">复制</button></div>'
-      +'<div class=hint style="word-break:break-all">V2Ray：<code>'+esc(l2)+'</code> <button class=btn2 onclick="sbCopy(\''+esc(l2)+'\')">复制</button></div>'
+      +'<div class=hint style="margin-top:8px;word-break:break-all">Clash：<code>'+esc(l1)+'</code> <button class=btn2 data-act=copy data-txt="'+esc(l1)+'">复制</button></div>'
+      +'<div class=hint style="word-break:break-all">V2Ray：<code>'+esc(l2)+'</code> <button class=btn2 data-act=copy data-txt="'+esc(l2)+'">复制</button></div>'
       +'</div>';
   }
   box.innerHTML=h;
+  box.onclick=function(ev){
+    var el=ev.target, b=null;
+    while(el && el!==box){ if(el.getAttribute && el.getAttribute('data-act')){ b=el; break; } el=el.parentNode; }
+    if(!b){ return; }
+    var a=b.getAttribute('data-act')||'';
+    if(a==='toggle'){ sbToggle(b.getAttribute('data-tok')||'', b.getAttribute('data-en')==='1'?0:1); }
+    else if(a==='del'){ sbDel(b.getAttribute('data-tok')||''); }
+    else if(a==='copy'){ sbCopy(b.getAttribute('data-txt')||''); }
+  };
 }
 function sbCopy(txt){
   if(navigator.clipboard && navigator.clipboard.writeText){
@@ -2820,7 +2829,7 @@ function sbCopy(txt){
   } else { prompt('手动复制：',txt); }
 }
 function sbSave(){
-  var raw=((document.getElementById('sb_urls')||{}).value||'').split('\n'), urls=[], i, u;
+  var raw=((document.getElementById('sb_urls')||{}).value||'').split(String.fromCharCode(10)), urls=[], i, u;
   for(i=0;i<raw.length;i++){ u=raw[i].trim(); if(u){ urls.push(u); } }
   var regions=[];
   document.querySelectorAll('.sbrg').forEach(function(c){ if(c.checked){ regions.push(c.value); } });
