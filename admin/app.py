@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.8.1"
+APP_VERSION = "2.8.2"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1648,9 +1648,10 @@ def _dec(raw):
     return raw.decode("utf-8", "replace")
 
 
-def _lat_one(url, timeout=6.0, samples=3):
-    """暖连接测延迟：先在一条连接上预热一次，再连续计时取最小值。
-    这样排除 DNS / TCP / TLS 握手（浏览器测的就是这个数），跨境长连接（YouTube 等）不再虚高。
+def _lat_round(url, timeout=6.0, samples=2):
+    """一轮暖连接测延迟：同一条连接上预热 1 次，再连测 samples 次取最小。
+    用 HEAD 只等响应头、不下载正文，所以才是真正的「延迟」而不是「延迟+下载」。
+    服务器不支持 HEAD（4xx）就退回 GET，并且只读到响应头就断开。
     """
     try:
         u = urllib.parse.urlsplit(url)
@@ -1663,18 +1664,29 @@ def _lat_one(url, timeout=6.0, samples=3):
         return 0
     best = 0
     conn = None
+    hdr = {"User-Agent": NET_UA, "Accept": "*/*", "Connection": "keep-alive"}
     try:
-        if u.scheme == "https":
-            conn = http.client.HTTPSConnection(host, port, timeout=timeout)
-        else:
-            conn = http.client.HTTPConnection(host, port, timeout=timeout)
-        hdr = {"User-Agent": NET_UA, "Accept": "*/*", "Connection": "keep-alive"}
+        conn = (http.client.HTTPSConnection(host, port, timeout=timeout)
+                if u.scheme == "https" else http.client.HTTPConnection(host, port, timeout=timeout))
+        method = "HEAD"
         for i in range(samples + 1):
             t0 = time.time()
-            conn.request("GET", path, headers=hdr)
+            conn.request(method, path, headers=hdr)
             r = conn.getresponse()
-            r.read()                      # 读干净，连接才能复用
             ms = int((time.time() - t0) * 1000)
+            if method == "HEAD" and int(getattr(r, "status", 200) or 200) >= 400:
+                method = "GET"         # 不支持 HEAD，改 GET（只读响应头就够）
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = (http.client.HTTPSConnection(host, port, timeout=timeout)
+                        if u.scheme == "https" else http.client.HTTPConnection(host, port, timeout=timeout))
+                continue
+            try:
+                r.read(1024 if method == "GET" else 0)
+            except Exception:
+                pass
             if i >= 1 and ms > 0:
                 best = ms if best == 0 else min(best, ms)
     except Exception:
@@ -1686,6 +1698,14 @@ def _lat_one(url, timeout=6.0, samples=3):
         except Exception:
             pass
     return best
+
+
+def _lat_one(url, timeout=6.0, samples=2):
+    """测延迟：失败/超时会换新连接再试一轮，两轮取到值就返回。"""
+    ms = _lat_round(url, timeout, samples)
+    if ms:
+        return ms
+    return _lat_round(url, timeout, samples)
 
 
 def _ipv4(text):
@@ -3077,7 +3097,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.8.1</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.8.2</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
