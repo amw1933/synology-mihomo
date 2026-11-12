@@ -64,6 +64,37 @@ KERNEL_CFG = KERNEL_DIR + "/config.yaml"
 _UPD_LOCK = threading.Lock()
 _SESSIONS = {}
 _SESSION_LOCK = threading.Lock()
+
+# ---- 会话持久化：管理台重启后不用重新登录 ----
+def _sess_file():
+    return os.path.join(BASE, ".sessions.json")
+
+
+def _sess_load():
+    try:
+        with open(_sess_file(), "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception:
+        return {}
+    now = time.time()
+    out = {}
+    for k, v in (d or {}).items():
+        try:
+            if float(v) > now:
+                out[str(k)] = float(v)
+        except Exception:
+            pass
+    return out
+
+
+def _sess_save():
+    try:
+        tmp = _sess_file() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_SESSIONS, f)
+        os.replace(tmp, _sess_file())
+    except Exception:
+        pass
 _LOG_LOCK = threading.Lock()
 
 
@@ -1588,6 +1619,8 @@ class Handler(BaseHTTPRequestHandler):
         if not tok:
             return False
         with _SESSION_LOCK:
+            if not _SESSIONS:
+                _SESSIONS.update(_sess_load())
             exp = _SESSIONS.get(tok)
             if not exp or exp < time.time():
                 _SESSIONS.pop(tok, None)
@@ -1609,6 +1642,7 @@ class Handler(BaseHTTPRequestHandler):
             tok = self._token()
             with _SESSION_LOCK:
                 _SESSIONS.pop(tok, None)
+            _sess_save()
             return self._send("", "text/html; charset=utf-8", 302,
                               {"Set-Cookie": "mh_sid=; Path=/; Max-Age=0",
                                "Location": "/"})
@@ -1665,12 +1699,24 @@ class Handler(BaseHTTPRequestHandler):
         d = self._payload()
         try:
             if p == "/login":
-                if _eq(d.get("pass", ""), current_pass()):
+                fd = d if isinstance(d, dict) else {}
+                is_form = "x-www-form-urlencoded" in (self.headers.get("Content-Type") or "").lower()
+                if _eq(str(fd.get("pass", "")), current_pass()):
                     tok = sess_new()
-                    log("登录成功")
-                    return self._json({"ok": True, "msg": "登录成功"},
-                                      headers={"Set-Cookie": "mh_sid=%s; Path=/; Max-Age=604800" % tok})
+                    days = 30 if str(fd.get("remember") or "") not in ("", "0", "false", "False") else 7
+                    with _SESSION_LOCK:
+                        _SESSIONS[tok] = time.time() + days * 86400
+                    _sess_save()
+                    log("登录成功（记住 %d 天）" % days)
+                    ck = "mh_sid=%s; Path=/; Max-Age=%d" % (tok, days * 86400)
+                    if is_form:
+                        return self._send("", "text/html; charset=utf-8", 302,
+                                          {"Set-Cookie": ck, "Location": "/"})
+                    return self._json({"ok": True, "msg": "登录成功"}, headers={"Set-Cookie": ck})
                 log("登录失败（密码错误）")
+                if is_form:
+                    return self._html(LOGIN_PAGE.replace(
+                        '<div class=err id=e></div>', '<div class=err id=e>密码错误，请重试</div>'))
                 return self._json({"ok": False, "error": "密码错误"}, 401)
             if not self._authed():
                 return self._need_auth()
@@ -1902,17 +1948,14 @@ input{width:100%;padding:11px 12px;border-radius:9px;border:1px solid #475467;ba
 button{width:100%;margin-top:14px;padding:11px;border:0;border-radius:9px;background:#3b82f6;color:#fff;font-size:15px;cursor:pointer}
 button:hover{background:#2563eb}.err{color:#f97066;margin-top:12px;min-height:20px;font-size:13px}
 </style></head><body>
-<form class=card onsubmit="return go(event)">
+<form class=card method=post action="/login" autocomplete="on">
 <h1>🛡️ mihomo 网页管理台</h1><p class=sub>群晖 NAS · 请输入管理台密码</p>
-<input id=p type=password placeholder=管理台密码 autocomplete=current-password autofocus>
-<button type=submit>登 录</button><div class=err id=e></div></form>
-<script>
-function go(ev){ev.preventDefault();
- fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({pass:document.getElementById('p').value})})
- .then(r=>r.json()).then(d=>{ if(d.ok){location.href='/';} else {document.getElementById('e').textContent=d.error||'登录失败';} })
- .catch(e=>{document.getElementById('e').textContent='请求失败：'+e;}); return false;}
-</script></body></html>
+<input type=text name=username value="mihomo-admin" autocomplete="username" style="display:none">
+<input id=p name=pass type=password placeholder=管理台密码 autocomplete="current-password" autofocus>
+<label style="display:flex;align-items:center;gap:8px;margin:12px 0 0;color:#98a2b3;font-size:13px">
+<input type=checkbox name=remember value=1 checked style="width:auto;margin:0"> 记住我（30 天免登录）</label>
+<button type=submit>登 录</button><div class=err id=e></div>
+<p class=sub style="margin:14px 0 0">首次登录后浏览器会提示「保存密码」✓，之后自动填入 ✓</p></form></body></html>
 """
 
 PAGE = """<!doctype html>
