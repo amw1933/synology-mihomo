@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "1.7"
+APP_VERSION = "1.8"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -42,6 +42,7 @@ BACKUP_DIR = os.path.join(BASE, "backup")
 LOG_PATH = os.path.join(BASE, "admin.log")
 SETTINGS_PATH = os.path.join(BASE, "settings.json")
 SUBURL_PATH = os.path.join(BASE, "sub.url")
+SUBLINKS_PATH = os.path.join(BASE, "sublinks.json")
 
 ADMIN_PORT = int(os.environ.get("ADMIN_PORT", "9093") or 9093)
 ADMIN_BIND = os.environ.get("ADMIN_BIND", "127.0.0.1") or "127.0.0.1"
@@ -1700,6 +1701,21 @@ class Handler(BaseHTTPRequestHandler):
     MIHOMO_API = ("/version", "/configs", "/proxies", "/rules", "/providers", "/connections",
                   "/logs", "/traffic", "/memory", "/group", "/delay", "/dns")
 
+    def _serve_sub(self, p):
+        """公开的订阅输出（不需要登录）：/sub/<token>?target=clash|v2ray"""
+        tok = p[len("/sub/"):].strip("/")
+        if "/" in tok:
+            tok = tok.split("/")[0]
+        args = self._args()
+        txt, err = sub_render(tok, args.get("target", "clash"))
+        if txt is None:
+            log("订阅拉取失败：%s" % err)
+            return self._json({"ok": False, "error": err}, 404)
+        return self._send(txt.encode("utf-8"), "text/plain; charset=utf-8", 200,
+                          {"Content-Disposition": 'attachment; filename="sub-%s.yaml"' % tok[:8],
+                           "Profile-Update-Interval": "24",
+                           "Subscription-Userinfo": "upload=0; download=0; total=0; expire=0"})
+
     def _is_kernel_path(self, p):
         for m in self.MIHOMO_API:
             if p == m or p.startswith(m + "/"):
@@ -1836,6 +1852,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send("", "text/html; charset=utf-8", 302,
                               {"Set-Cookie": "mh_sid=; Path=/; Max-Age=0",
                                "Location": "/"})
+        if p.startswith("/sub/"):
+            return self._serve_sub(p)
         if p == "/ui" or p.startswith("/ui/"):
             return self._serve_ui(p)
         if p == "/clash" or p.startswith("/clash/"):
@@ -1870,6 +1888,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "items": list_backups()})
             if p == "/api/ip":
                 return self._json({"ok": True, "ip": detect_ip()})
+            if p == "/api/sublinks":
+                return self._json({"ok": True, "items": sublinks_list()})
             if p == "/api/nodes":
                 s = load_settings()
                 return self._json({"ok": True, "count": len(manual_nodes(s)),
@@ -1951,6 +1971,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": ok, "msg": out})
             if p == "/api/airports":
                 return self._json(save_airports(s, d))
+            if p == "/api/sublinks":
+                return self._json(save_sublinks(s, d))
             if p == "/api/nodes":
                 return self._json(save_nodes(s, d))
             if p == "/api/groups":
@@ -1967,6 +1989,144 @@ class Handler(BaseHTTPRequestHandler):
 
 
 # ---------------------------------------------------------------- 设置写入
+# ---------------------------------------------------------------- 订阅生成（sublink）
+def sublinks_load():
+    """订阅表：{token: {name, urls, regions, enable, created}}"""
+    try:
+        with io.open(SUBLINKS_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def sublinks_save(d):
+    tmp = SUBLINKS_PATH + ".tmp"
+    with io.open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(d, ensure_ascii=False, indent=2))
+    os.replace(tmp, SUBLINKS_PATH)
+    return d
+
+
+def sublinks_list():
+    d = sublinks_load()
+    out = []
+    for k, v in d.items():
+        if not isinstance(v, dict):
+            continue
+        out.append({"token": k, "name": v.get("name") or k,
+                    "urls": v.get("urls") or [], "regions": v.get("regions") or [],
+                    "enable": bool(v.get("enable", True)), "created": v.get("created") or "",
+                    "kind": v.get("kind") or "clash"})
+    out.sort(key=lambda x: x.get("created") or "")
+    return out
+
+
+def sub_token():
+    """16 位小写 token（base32）"""
+    return base64.b32encode(os.urandom(10)).decode().rstrip("=").lower()
+
+
+def _sub_share_lines(data):
+    """把一个订阅的内容变成分享链接列表（支持 base64 / 明文；Clash YAML 留到阶段2）"""
+    try:
+        txt = data.decode("utf-8", "replace")
+    except Exception:
+        txt = ""
+    cand = []
+    # base64 订阅
+    try:
+        pad = txt.strip().replace("\n", "").replace("\r", "")
+        pad += "=" * (-len(pad) % 4)
+        dec = base64.b64decode(pad).decode("utf-8", "replace")
+        if "://" in dec:
+            cand.append(dec)
+    except Exception:
+        pass
+    cand.append(txt)
+    for c in cand:
+        lines = []
+        for ln in c.splitlines():
+            ln = ln.strip()
+            if "://" in ln and not ln.startswith("#"):
+                lines.append(ln)
+        if lines:
+            return lines
+    return []
+
+
+def sub_render(token, target="clash"):
+    """返回 (内容, 错误)。token 无效或停用时返回 (None, 原因)"""
+    item = sublinks_load().get(str(token or ""))
+    if not isinstance(item, dict):
+        return None, "订阅不存在（或已被删除）"
+    if not item.get("enable", True):
+        return None, "这条订阅已被停用"
+    urls = [str(u).strip() for u in (item.get("urls") or []) if str(u).strip().startswith("http")]
+    if not urls:
+        return None, "这条订阅还没有填来源链接"
+    tgt = (target or "clash").strip().lower()
+    if tgt in ("clash", "mihomo", "clashmeta", "clash-verge"):
+        import copy as _copy
+        s2 = _copy.deepcopy(load_settings())
+        # 来源当成 proxy-providers（客户端自己拉，节点不进面板）
+        s2["airports"] = [{"name": "sub%d" % (i + 1), "url": u, "interval": 86400}
+                          for i, u in enumerate(urls)]
+        s2["nodes"] = []
+        s2["tun_enable"] = False
+        if item.get("regions"):
+            s2["regions"] = [r for r in item["regions"] if r in REGION_MAP]
+        s2["custom_groups"] = item.get("custom_groups") or []
+        txt = gen_config(s2)
+        # 订阅内容里不该带内核控制密钥
+        txt = re.sub(r"(?m)^secret:.*$", 'secret: ""', txt)
+        return txt, ""
+    if tgt in ("v2ray", "v2rayn", "v2rayng", "base64", "v2", "shadowrocket", "mihomo-base64"):
+        out = []
+        for u in urls:
+            data, err = http_fetch(u, timeout=40)
+            if not data:
+                continue
+            out.extend(_sub_share_lines(data))
+        if not out:
+            return None, "来源里没解析到分享链接（如果这是 Clash 订阅，请用 target=clash）"
+        return base64.b64encode("\n".join(out).encode("utf-8")).decode("ascii"), ""
+    return None, "暂不支持的目标 %s（sing-box / Surge 在阶段 2）" % target
+
+
+def save_sublinks(s, d):
+    act = str(d.get("action") or "save")
+    tbl = sublinks_load()
+    tok = str(d.get("token") or "").strip()
+    if act == "del":
+        tbl.pop(tok, None)
+        sublinks_save(tbl)
+        log("订阅：已删除 %s" % tok[:8])
+        return {"ok": True, "msg": "已删除这条订阅（链接立刻失效）"}
+    if act == "toggle":
+        if tok not in tbl:
+            return {"ok": False, "error": "订阅不存在"}
+        tbl[tok]["enable"] = bool(d.get("enable"))
+        sublinks_save(tbl)
+        return {"ok": True, "msg": "已%s" % ("启用" if tbl[tok]["enable"] else "停用")}
+    urls = [str(x).strip() for x in (d.get("urls") or []) if str(x).strip()]
+    urls = [u for u in urls if u.startswith("http")]
+    if not urls:
+        return {"ok": False, "error": "至少要填一个 http 开头的订阅链接"}
+    name = str(d.get("name") or "").strip() or "我的订阅"
+    regions = [str(r) for r in (d.get("regions") or []) if str(r) in REGION_MAP]
+    if not tok:
+        tok = sub_token()
+        while tok in tbl:
+            tok = sub_token()
+        tbl[tok] = {"created": now()}
+    tbl[tok].update({"name": name, "urls": urls, "regions": regions,
+                     "enable": bool(d.get("enable", True))})
+    sublinks_save(tbl)
+    log("订阅：已保存「%s」(%d 个来源)" % (name, len(urls)))
+    return {"ok": True, "msg": "已保存订阅「%s」" % name, "token": tok}
+
+
 def save_airports(s, d):
     act = d.get("action") or "save"
     name = str(d.get("name") or "").strip()
@@ -2205,14 +2365,14 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v1.7</span>
+ <span class="pill" id=ver style="background:#3b82f6">v1.8</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
 </header>
 <nav>
  <a data-t=status class=on>状态</a><a data-t=airports>机场</a><a data-t=nodes>节点</a>
- <a data-t=groups>策略</a><a data-t=tools>工具</a>
+ <a data-t=groups>策略</a><a data-t=sublinks>订阅</a><a data-t=tools>工具</a>
 </nav>
 <main>
  <div id=wp class=warnbox style="display:none">⚠️ 你还在用默认密码，请立刻到「工具」页改掉，否则同网段任何人都能打开管理台并看到你的节点。</div>
@@ -2306,6 +2466,21 @@ th{color:#475467;font-weight:600;font-size:12.5px}
    <div style="margin-bottom:8px"><button class=btn onclick="loadLogs()">刷新日志</button></div>
    <div id=logs>点击「刷新日志」加载</div></div>
  </section>
+
+ <section id=tab-sublinks hidden>
+  <div class=card><h2>🔗 订阅生成 <span class=sp></span><span class=hint>把自己的订阅变成一个可分享的链接</span></h2>
+   <div class=hint>填名称 + 来源链接（可多行，多个会<b>合并</b>）→ 保存后得到两条链接：<b>Clash</b>（含你面板这套策略组）和 <b>V2Ray</b>（base64）。数据只存在你家 NAS（<code>/data/sublinks.json</code>），不经过任何第三方。</div>
+   <div class=row style="margin-top:10px">
+    <div style="flex:1 1 260px"><label>名称</label><input id=sb_name placeholder="例如 给朋友的香港节点"></div>
+    <div style="flex:0 0 150px"><label>&nbsp;</label><button class=btn onclick="sbSave()">保存 / 新增</button></div>
+   </div>
+   <div style="margin-top:10px"><label>订阅来源（每行一个 http 链接）</label>
+    <textarea id=sb_urls rows=3 style="width:100%;padding:9px 10px;border:1px solid #d0d5dd;border-radius:8px;font-size:13px" placeholder="https://机场A/api/v1/client/subscribe?token=xxx&#10;https://机场B/api/v1/client/subscribe?token=yyy"></textarea></div>
+   <div style="margin-top:10px"><label>只保留这些地区（不勾 = 全部；对 Clash 输出生效）</label>
+    <div id=sb_rg style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px"></div></div>
+  </div>
+  <div class=card><h2>📋 已有订阅</h2><div id=sb_list></div></div>
+ </section>
 </main>
 <div id=upbox2><div class=box id=upmsg></div></div>
 <script>
@@ -2339,11 +2514,11 @@ function show(s){return String(s==null?'':s)}
 var TAB='status';
 function tab(t){
   TAB=t;
-  ['status','airports','nodes','groups','tools'].forEach(function(k){$('#tab-'+k).hidden=(k!==t)});
+  ['status','airports','nodes','groups','sublinks','tools'].forEach(function(k){$('#tab-'+k).hidden=(k!==t)});
   document.querySelectorAll('nav a').forEach(function(a){a.className=(a.dataset.t===t?'on':'')});
   load();
 }
-document.querySelectorAll('nav a').forEach(function(a){a.onclick=function(){tab(a.dataset.t)}});
+document.querySelectorAll('nav a').forEach(function(a){a.onclick=function(){try{tab(a.dataset.t)}catch(e){};if(a.dataset.t==='sublinks'){sbLoad()}}});
 function gen(){apiPost('/api/gen',{},0)}
 function reload(){load()}
 
@@ -2353,6 +2528,7 @@ function load(){
   else if(TAB==='nodes'){loadNodes()}
   else if(TAB==='groups'){loadGroups()}
   else if(TAB==='tools'){loadTools()}
+  else if(TAB==='sublinks'){sbLoad()}
 }
 function chkKernel(){
   upModal('⏳ 正在检查内核最新版本…');
@@ -2601,6 +2777,65 @@ function doUpdate(){
   });
 }
 function loadLogs(){ fetch('/api/logs?n=200').then(r=>r.json()).then(function(d){$('#logs').textContent=d.log||''}); }
+/* ===== 订阅生成（由 DSH 加入）===== */
+var SB=[];
+function sbLink(t,target){ return location.origin+'/sub/'+t+'?target='+target; }
+function sbLoad(){
+  var rg=document.getElementById('sb_rg');
+  if(rg && !rg.dataset.done){
+    var all=['香港','日本','新加坡','美国','台湾','韩国','英国','德国','法国','荷兰','意大利','西班牙','欧洲'];
+    var lab={'香港':'香港','日本':'日本','新加坡':'狮城','美国':'美国','台湾':'台湾','韩国':'韩国','英国':'英国','德国':'德国','法国':'法国','荷兰':'荷兰','意大利':'意大利','西班牙':'西班牙','欧洲':'欧洲'};
+    var h='';
+    for(var i=0;i<all.length;i++){ h+='<label class=chk><input type=checkbox class=sbrg value="'+esc(all[i])+'"> '+esc(lab[all[i]]||all[i])+'</label>'; }
+    rg.innerHTML=h; rg.dataset.done='1';
+  }
+  fetch('/api/sublinks').then(function(r){return r.json()}).then(function(d){ SB=(d&&d.items)||[]; sbRender(); });
+}
+function sbRender(){
+  var box=document.getElementById('sb_list');
+  if(!box){ return; }
+  if(!SB.length){ box.innerHTML='<div class=hint>还没有订阅 —— 上面填好名称和来源，点「保存 / 新增」。</div>'; return; }
+  var h='', i, it, l1, l2;
+  for(i=0;i<SB.length;i++){
+    it=SB[i]; l1=sbLink(it.token,'clash'); l2=sbLink(it.token,'v2ray');
+    h+='<div style="padding:12px 0;border-bottom:1px solid #e6ecf5">'
+      +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+      +'<b>'+esc(it.name)+'</b>'
+      +(it.enable?'<span class="pill" style="background:#12b76a">启用</span>':'<span class="pill" style="background:#98a2b3">已停用</span>')
+      +'<span class=hint>'+esc((it.urls||[]).length)+' 个来源'+((it.regions&&it.regions.length)?' · 地区：'+esc(it.regions.join('/')):'')+'</span>'
+      +'<span class=sp></span>'
+      +'<button class=btn2 onclick="sbToggle(\''+it.token+'\','+(it.enable?0:1)+')">'+(it.enable?'停用':'启用')+'</button>'
+      +'<button class="btn2 red" onclick="sbDel(\''+it.token+'\')">删除</button>'
+      +'</div>'
+      +'<div class=hint style="margin-top:8px;word-break:break-all">Clash：<code>'+esc(l1)+'</code> <button class=btn2 onclick="sbCopy(\''+esc(l1)+'\')">复制</button></div>'
+      +'<div class=hint style="word-break:break-all">V2Ray：<code>'+esc(l2)+'</code> <button class=btn2 onclick="sbCopy(\''+esc(l2)+'\')">复制</button></div>'
+      +'</div>';
+  }
+  box.innerHTML=h;
+}
+function sbCopy(txt){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(function(){ upModal('✅ 已复制到剪贴板<div style="margin-top:12px"><button class=btn onclick="upClose()">知道了</button></div>'); },
+      function(){ prompt('手动复制：',txt); });
+  } else { prompt('手动复制：',txt); }
+}
+function sbSave(){
+  var raw=((document.getElementById('sb_urls')||{}).value||'').split('\n'), urls=[], i, u;
+  for(i=0;i<raw.length;i++){ u=raw[i].trim(); if(u){ urls.push(u); } }
+  var regions=[];
+  document.querySelectorAll('.sbrg').forEach(function(c){ if(c.checked){ regions.push(c.value); } });
+  apiPost('/api/sublinks',{action:'save',name:((document.getElementById('sb_name')||{}).value||''),urls:urls,regions:regions},1)
+   .then(function(d){
+     if(d && d.ok){
+       var ta=document.getElementById('sb_urls'); if(ta){ ta.value=''; }
+       var nm=document.getElementById('sb_name'); if(nm){ nm.value=''; }
+       sbLoad();
+     }
+   });
+}
+function sbDel(t){ if(!confirm('删除这条订阅？链接会立刻失效，朋友那边就用不了了。')){ return; } apiPost('/api/sublinks',{action:'del',token:t},1).then(function(){ sbLoad(); }); }
+function sbToggle(t,e){ apiPost('/api/sublinks',{action:'toggle',token:t,enable:!!e},1).then(function(){ sbLoad(); }); }
+
 loadStatus();
 </script>
 <button id=mhuiBtn onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()" style="position:fixed;right:18px;bottom:18px;z-index:9999;padding:10px 16px;border:0;border-radius:22px;background:#2f81f7;color:#fff;font-size:14px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.35)">节点面板（内嵌）</button>
