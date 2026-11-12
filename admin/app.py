@@ -2239,18 +2239,19 @@ th{color:#475467;font-weight:600;font-size:12.5px}
  <section id=tab-tools hidden>
   <div class=card><h2>🔌 端口与地址</h2>
    <div class=row>
-    <div><label>绑定 IP（本机地址）</label><input id=t_ip></div>
-    <div><label>管理台绑定</label><input id=t_ab></div>
+    <div><label>绑定 IP（本机地址）</label><input id=t_ip readonly style="background:#f2f4f7;color:#98a2b3;cursor:not-allowed"></div>
+    <div><label>管理台绑定</label><input id=t_ab readonly style="background:#f2f4f7;color:#98a2b3;cursor:not-allowed"></div>
     <div><label>代理端口</label><input id=t_pp></div>
     <div><label>内核接口端口（仅本机）</label><input id=t_pa></div>
     <div><label>管理台端口（对外唯一）</label><input id=t_ad></div>
    </div>
    <div class=row><div><label>管理台密码（= 面板密钥）</label><input id=t_sc></div></div>
    <div style="margin-top:12px"><button class=btn onclick="tlSave()">保存</button>
+    <button class="btn gray" onclick="applyAll()">应用并重建容器</button>
     <span class=hint style="margin-left:8px">保存密码</span></div>
    <div class=hint><b>单端口设计</b>：节点面板（<code>/ui/</code>）和管理台「共用一个端口」= 管理台端口，对外只需要放通这一个。
     <b>内核接口端口</b>（默认 9091）只绑 <code>127.0.0.1</code>，是管理台和内核之间的内部通道，不对外、也不用在路由器上放通。</div>
-   <div class=hint>改密码 / 端口后点上面「保存」✓；只有当端口本身变了、需要重建容器时，才在 NAS 上用 SSH 执行 <code>docker compose up -d</code>（本页不再提供「应用并重建容器」）。</div></div>
+   <div class=hint>改<b>密码</b>：点「保存」即可 ✓；改<b>端口</b>：先点「保存」✓，再点「应用并重建容器」才算生效 ✓</div></div>
 
   <div class=card><h2>⏰ 定时自动更新</h2>
    <label class=chk><input type=checkbox id=t_sch> 启用</label>
