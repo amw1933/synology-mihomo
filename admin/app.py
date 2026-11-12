@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.8"
+APP_VERSION = "2.8.1"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1842,20 +1842,17 @@ def split_test(force=False):
         if not force and _SPLIT_CACHE["d"] and now - _SPLIT_CACHE["t"] < 60:
             return _SPLIT_CACHE["d"]
     s = load_settings()
-    ms_map = {}
 
     def fire(host):
-        t0 = time.time()
+        """发一个请求并短暂保持连接 —— 只为让 /connections 抓得到，不关心耗时"""
         try:
             rq = urllib.request.Request("https://%s/" % host,
                                         headers={"User-Agent": NET_UA, "Accept": "*/*"})
             with urllib.request.urlopen(rq, timeout=9.0) as r:
                 r.read(512)
-                ms_map[host] = int((time.time() - t0) * 1000)
-                time.sleep(1.5)          # 保持连接，让 /connections 抓得到
+                time.sleep(1.2)
         except Exception:
-            if host not in ms_map:
-                ms_map[host] = 0
+            pass
 
     for grp, host in SPLIT_TARGETS:
         threading.Thread(target=fire, args=(host,), daemon=True).start()
@@ -1881,6 +1878,10 @@ def split_test(force=False):
         if len(found) < len(SPLIT_TARGETS):
             time.sleep(0.15)
 
+    # 延迟：暖连接法（预热 1 次 + 连测 2 次取最小），与上方 8 个站点同一套算法
+    lat = _parallel([(grp, (lambda h=host: _lat_one("https://%s/" % h, 6.0, 2)))
+                     for grp, host in SPLIT_TARGETS], 22)
+
     rows = []
     for grp, host in SPLIT_TARGETS:
         c = found.get(grp) or {}
@@ -1896,7 +1897,7 @@ def split_test(force=False):
             ok = 1 if top == grp else 0
         rows.append({"group": grp, "host": host, "rule": rule, "payload": payload,
                      "chain": " > ".join(chains), "top": top, "ok": ok,
-                     "ms": int(ms_map.get(host) or 0)})
+                     "ms": int(lat.get(grp) or 0)})
     d = {"rows": rows, "ts": int(now)}
     with _NI_LOCK:
         _SPLIT_CACHE["d"] = d
@@ -3076,7 +3077,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.8</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.8.1</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
