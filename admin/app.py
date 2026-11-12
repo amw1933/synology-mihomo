@@ -31,7 +31,7 @@ except Exception:               # 缺失时不致命，只是不能加手动节�
     sub_convert = None
 
 APP_NAME = "mihomo-admin"
-APP_VERSION = "2.2"
+APP_VERSION = "2.4"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -465,6 +465,9 @@ def gen_config(s):
     a('    - "+.msftncsi.com"')
     for _d in [x.strip().lstrip("*.") for x in str(s.get("direct_domains") or "").split(",") if x.strip()]:
         a('    - "+.%s"' % _d)
+    for _it in (s.get("custom_routes") or []):
+        if isinstance(_it, dict) and str(_it.get("domain") or "").strip():
+            a('    - "+.%s"' % str(_it.get("domain")).strip())
     a("")
 
     # ---- 机场 = 独立 proxy-providers（用户明确要的设计）
@@ -618,6 +621,19 @@ def gen_config(s):
         _r = "DOMAIN-SUFFIX,%s,DIRECT" % _d
         if _r not in rules:
             rules.append(_r)
+    # 自定义分流：按网站指定 直连 / 走代理 / 指定策略组（排在规则集前面，优先级最高）
+    for _it in (s.get("custom_routes") or []):
+        if not isinstance(_it, dict):
+            continue
+        _dm = str(_it.get("domain") or "").strip()
+        _tg = re.sub(r"[^\w\u4e00-\u9fa5 .&-]", "", str(_it.get("target") or "").strip())[:40] or "漏网之鱼"
+        if _tg.upper() == "DIRECT":
+            _tg = "直连"
+        if not _dm or not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,251}$", _dm):
+            continue
+        _r2 = "DOMAIN-SUFFIX,%s,%s" % (_dm, _tg)
+        if _r2 not in rules:
+            rules.append(_r2)
     if s.get("ruleset_enabled", True):
         rt = s.get("rule_targets") or {}
 
@@ -2447,6 +2463,23 @@ def save_groups(s, d):
                         "filter": str(cg.get("filter") or "").strip()[:200],
                         "icon": str(cg.get("icon") or "select")[:32], "interval": itv})
         s["custom_groups"] = out
+    if isinstance(d.get("custom_routes"), list):
+        out = []
+        for it in d["custom_routes"]:
+            if not isinstance(it, dict):
+                continue
+            dm = str(it.get("domain") or "").strip().lower()
+            dm = dm.replace("http://", "").replace("https://", "").split("/")[0].strip()
+            dm = dm.lstrip("*.").strip(".")
+            if not dm or not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,251}$", dm) or ".." in dm:
+                continue
+            tg = str(it.get("target") or "").strip() or "漏网之鱼"
+            item = {"domain": dm, "target": tg[:40]}
+            if item not in out:
+                out.append(item)
+            if len(out) >= 200:
+                break
+        s["custom_routes"] = out
     if isinstance(d.get("rule_targets"), dict):
         s["rule_targets"] = {str(k): str(v) for k, v in d["rule_targets"].items()}
     if "ruleset_enabled" in d:
@@ -2597,7 +2630,7 @@ th{color:#475467;font-weight:600;font-size:12.5px}
 </style></head><body>
 <header>
  <h1>🛡️ mihomo 网页管理台</h1>
- <span class="pill" id=ver style="background:#3b82f6">v2.2</span>
+ <span class="pill" id=ver style="background:#3b82f6">v2.4</span>
  <span class="pill" id=hd>群晖 NAS</span>
  <span class=sp></span>
  <a class=btn style="background:#475467;text-decoration:none" href="/logout">退出登录</a>
@@ -2652,6 +2685,12 @@ th{color:#475467;font-weight:600;font-size:12.5px}
      <span class=hint style="margin-left:8px">成员填名字、逗号分隔（如 <code>香港自动,日本故转</code>，也可直接写节点名）；成员留空则按「过滤规则」自动收录节点，过滤规则也留空 = 收录全部节点。</span></div>
    <div class=hint>支持类型：select（手动选）/ url-test（自动测速）/ fallback（故障转移）/ load-balance（负载均衡）。改完记得点下面「保存策略并生成配置」。</div>
   </div>
+  <div class=card><h2>🧭 自定义分流（按网站选直连/代理）</h2>
+   <div id=cr></div>
+   <div style="margin-top:10px"><button class=btn onclick="crAdd()">➕ 添加一行</button>
+    <span class=hint style="margin-left:8px">域名写 <code>example.com</code> 就行（自动包含它自己和所有子域）；去向可选 <b>直连</b> / <b>代理（漏网之鱼）</b> / 任意地区组或自定义组。改完点下面「保存策略并生成配置」✓</span></div>
+   <div class=hint>这条规则排在规则集<b>前面</b>，所以优先级最高：选了直连就一定直连，选了某个组就一定走那个组。</div></div>
+
   <div class=card><h2>🧭 规则集分流</h2>
    <label class=chk><input type=checkbox id=rs_en onchange=rsToggle()> 启用规则集分流（七尺宇 qichiyuhub/rule + MetaCubeX meta-rules-dat）</label>
    <div class=hint>关闭后只保留基础规则（国内直连、其余走漏网之鱼）。</div></div>
@@ -5152,6 +5191,9 @@ function loadGroups(){
         var cgp=mem.indexOf('全部自动'); if(cgp<0){ cgp=mem.length; }
         mem=mem.slice(0,cgp).concat(cgs, mem.slice(cgp));
       }
+      window.MEM=mem;
+      CR=(s.custom_routes||[]).map(function(x){return {domain:x.domain||'',target:x.target||'漏网之鱼'};});
+      crRender();
       // 地区勾选
       var all=['香港','日本','新加坡','美国','台湾','韩国','英国','德国','法国','荷兰','意大利','西班牙','欧洲'];var h='';
       all.forEach(function(r){h+='<label class=chk><input type=checkbox class=rgc value="'+esc(r)+'"'+
@@ -5242,7 +5284,7 @@ function grSave(){
   }
   var regs=[];document.querySelectorAll('.rgc').forEach(function(c){if(c.checked)regs.push(c.value)});
   var g={};document.querySelectorAll('.bgs').forEach(function(sel){g[sel.dataset.n]=sel.value});
-  apiPost('/api/groups',{regions:regs,groups:g,ruleset_enabled:$('#rs_en').checked,custom_groups:cg},0);
+  apiPost('/api/groups',{regions:regs,groups:g,ruleset_enabled:$('#rs_en').checked,custom_groups:cg,custom_routes:CR},0);
 }
 function loadTools(){
   fetch('/api/settings').then(r=>r.json()).then(function(d){
@@ -5268,6 +5310,33 @@ function ddSave(){
     if(d&&d.ok){ upModal('✅ 已保存直连域名<div style="margin-top:8px" class=hint>点「立即更新配置」后生效：DNS 返回真实 IP + 域名走直连</div><div style="margin-top:12px"><button class=btn onclick="upClose()">知道了</button></div>'); }
   });
 }
+var CR=[];
+function crRender(){
+  var box=document.getElementById('cr');
+  if(!box){ return; }
+  var mem=(window.MEM||[]).filter(function(x){ return x && x!=='直连' && x!=='全部手动' && x!=='全部自动'; });
+  var h='', i, j, it;
+  for(i=0;i<CR.length;i++){
+    it=CR[i]||{};
+    h+='<div class=row style="margin-bottom:8px">'
+      +'<div style="flex:2 1 240px"><label>网站域名</label><input class=cr_d value="'+esc(it.domain||'')+'" placeholder="example.com"></div>'
+      +'<div style="flex:1 1 170px"><label>去向</label><select class=cr_t>'
+      +'<option value="直连"'+((it.target==='直连')?' selected':'')+'>直连（不走代理）</option>'
+      +'<option value="漏网之鱼"'+((!it.target||it.target==='漏网之鱼')?' selected':'')+'>代理（漏网之鱼）</option>';
+    for(j=0;j<mem.length;j++){
+      h+='<option value="'+esc(mem[j])+'"'+((it.target===mem[j])?' selected':'')+'>'+esc(mem[j])+'</option>';
+    }
+    h+='</select></div>'
+      +'<div style="flex:0 0 auto;align-self:flex-end"><button class="btn2 red" onclick="crDel('+i+')">删除</button></div>'
+      +'</div>';
+  }
+  box.innerHTML=h||'<div class=hint>还没有规则 —— 点下面「➕ 添加一行」，比如把某个网站设成直连或走某个地区组。</div>';
+  var ds=box.querySelectorAll('.cr_d'), ts=box.querySelectorAll('.cr_t'), k;
+  for(k=0;k<ds.length;k++){ (function(k){ ds[k].oninput=function(){ if(CR[k]){CR[k].domain=ds[k].value;} }; })(k); }
+  for(k=0;k<ts.length;k++){ (function(k){ ts[k].onchange=function(){ if(CR[k]){CR[k].target=ts[k].value;} }; })(k); }
+}
+function crAdd(){ CR.push({domain:'',target:'漏网之鱼'}); crRender(); }
+function crDel(i){ CR.splice(i,1); crRender(); }
 function ipDetect(){ fetch('/api/ip').then(r=>r.json()).then(function(d){ if(d.ip){$('#t_ip').value=d.ip;$('#t_ab').value=d.ip;} }); }
 function applyAll(){ apiPost('/api/apply',{},0); }
 function kdRestart(){ if(!confirm('重启内核容器 mihomo？')) return; apiPost('/api/kernel-restart',{},0); }
