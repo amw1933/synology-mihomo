@@ -198,6 +198,9 @@ def default_settings():
         "schedule_enabled": True,
         "schedule_time": "04:00",
         "last_run": "",
+        "auto_update_panel": True,
+        "auto_update_last": "",
+        "update_available": "",
         "admin_bind": "",
         "proxy_ip": "",
         "proxy_port": PROXY_PORT,
@@ -757,6 +760,12 @@ def ctrl_base(s):
     return "http://%s:%s" % (host, port)
 
 
+def ctrl_base(s):
+    """内核控制接口固定走本机回环：9091 只监听 127.0.0.1，不对外。
+    （「绑定 IP」只用于显示/提示，不能拿它去连内核，否则面板接口会 502）"""
+    return "http://127.0.0.1:%s" % str(s.get("panel_port") or "9091")
+
+
 def ctrl_get(s, path, timeout=8):
     req = urllib.request.Request(ctrl_base(s) + path)
     req.add_header("Authorization", "Bearer %s" % (s.get("secret") or ADMIN_PASS))
@@ -1185,6 +1194,146 @@ def sync_scripts():
         except Exception as e:  # noqa: BLE001
             res.append({"name": name, "ok": False, "error": "%r" % (e,)})
     return {"ok": all(r["ok"] for r in res), "items": res}
+
+
+def _self_restart():
+    """重启管理台容器（改完自己的程序文件后生效）"""
+    time.sleep(3)
+    try:
+        rc, out, err = run_cmd([DOCKER, "restart", APP_NAME], timeout=90)
+        if rc == 0:
+            return
+        log("重启管理台失败：%s" % ((err or out or "").strip()[:200]))
+    except Exception as e:  # noqa: BLE001
+        log("重启管理台异常：%r" % (e,))
+    try:
+        os._exit(1)          # 兜底：交给 restart 策略拉起
+    except Exception:
+        pass
+
+
+def self_update(apply=True):
+    """从仓库拉最新管理台程序（admin/app.py）：语法校验 -> 备份 -> 替换 -> 自动重启面板。
+
+    apply=False 时只做检查，不写任何文件。
+    """
+    url = "%s/admin/app.py?t=%d" % (RAW_BASE.rstrip("/"), int(time.time()))
+    data, err = http_fetch(url, timeout=60)
+    if not data or len(data) < 50000:
+        return {"ok": False, "error": "下载失败或文件不完整：%s" % (err or ("%d 字节" % len(data or b"")))}
+    src = data.decode("utf-8", "replace")
+    try:
+        compile(src, "app.py", "exec")
+    except SyntaxError as e:
+        return {"ok": False, "error": "新版本语法检查未通过，已放弃：%s" % e}
+    for mark in ("LOGIN_PAGE", "def main(", "proxy-groups"):
+        if mark not in src:
+            return {"ok": False, "error": "新版本内容不完整（缺少 %s），已放弃" % mark}
+    cur_path = os.path.abspath(__file__)
+    try:
+        with open(cur_path, "r", encoding="utf-8", errors="replace") as f:
+            cur = f.read()
+    except Exception:
+        cur = ""
+    note = ""
+    cur_bytes = len(cur.encode("utf-8"))
+    if len(data) < cur_bytes:
+        note = "（注意：仓库这版比当前小 %d 字节，可能是旧版）" % (cur_bytes - len(data))
+    if cur and cur.strip() == src.strip():
+        return {"ok": True, "msg": "已经是最新版本（%d 字节）" % len(data)}
+    if not apply:
+        return {"ok": True,
+                "msg": "检查通过：可以更新到 %d 字节（当前 %d 字节）%s，尚未写入任何文件" % (len(data), cur_bytes, note),
+                "detail": {"url": url.split("?")[0]}}
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    bp = ""
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        bp = os.path.join(BACKUP_DIR, "app-%s.py" % ts)
+        with open(bp, "w", encoding="utf-8", newline="") as f:
+            f.write(cur)
+    except Exception as e:  # noqa: BLE001
+        log("备份管理台程序失败：%r" % (e,))
+    try:
+        tmp = cur_path + ".new"
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(src)
+        os.replace(tmp, cur_path)
+        try:
+            with open(os.path.join(BASE, "app.py.orig"), "w", encoding="utf-8", newline="") as f:
+                f.write(src)
+        except Exception:
+            pass
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": "写入失败：%r" % (e,)}
+    log("管理台程序已更新：%d -> %d 字节（备份 %s）" % (cur_bytes, len(data), os.path.basename(bp) or "无"))
+    try:
+        _s2 = load_settings()
+        _sha = repo_latest_sha()
+        if _sha:
+            _s2["auto_update_last"] = _sha
+        _s2["update_available"] = ""
+        save_settings(_s2)
+    except Exception:  # noqa: BLE001
+        pass
+    threading.Thread(target=_self_restart, daemon=True).start()
+    return {"ok": True,
+            "msg": "已更新到最新版（%d 字节）%s，正在重启管理台，约 8 秒后自动刷新页面" % (len(data), note),
+            "detail": {"backup": os.path.basename(bp)}}
+
+
+def repo_latest_sha():
+    """取仓库里 admin/app.py 的最新提交号（用于判断有没有新版本）"""
+    try:
+        u = "https://api.github.com/repos/amw1933/synology-mihomo/commits?path=admin/app.py&per_page=1"
+        data, err = http_fetch(u, timeout=30)
+        if not data:
+            return ""
+        j = jloads(data.decode("utf-8", "replace"), None)
+        if isinstance(j, list) and j:
+            return str(j[0].get("sha") or "")
+    except Exception as e:  # noqa: BLE001
+        log("查询仓库版本失败：%r" % (e,))
+    return ""
+
+
+def update_check_once():
+    """检查仓库有没有新版：只写「有更新」标记，不下载、不安装（安装由手动按钮触发）"""
+    s = load_settings()
+    if not s.get("auto_update_panel", True):
+        return {"ok": True, "enabled": False}
+    sha = repo_latest_sha()
+    if not sha:
+        return {"ok": False, "error": "读取仓库版本失败"}
+    last = str(s.get("auto_update_last") or "")
+    if not last:
+        s["auto_update_last"] = sha          # 首次只记基线
+        s["update_available"] = ""
+        save_settings(s)
+        log("更新检查：已记录基线版本 %s" % sha[:8])
+        return {"ok": True, "available": False, "msg": "已记录基线"}
+    if sha != last:
+        s["update_available"] = sha
+        save_settings(s)
+        log("更新检查：发现新版 %s（本地记录 %s）—— 页面会提示，点「更新管理台程序」安装" % (sha[:8], last[:8]))
+        return {"ok": True, "available": True, "sha": sha[:8]}
+    if s.get("update_available"):
+        s["update_available"] = ""
+        save_settings(s)
+    return {"ok": True, "available": False, "msg": "已是最新"}
+
+
+def auto_update_loop():
+    """后台线程：每 6 小时检查一次有没有新版（只提示）"""
+    time.sleep(90)
+    while True:
+        try:
+            r = update_check_once()
+            if not r.get("ok"):
+                log("更新检查失败：%s" % r.get("error"))
+        except Exception as e:  # noqa: BLE001
+            log("更新检查线程异常：%r" % (e,))
+        time.sleep(6 * 3600)
 
 
 def bootstrap():
@@ -1736,6 +1885,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(install_panel())
             if p == "/api/sync":
                 return self._json(sync_scripts())
+            if p == "/api/self-update":
+                _fd = d if isinstance(d, dict) else {}
+                return self._json(self_update(apply=bool(_fd.get("apply"))))
+            if p == "/api/auto-update":
+                _fd = d if isinstance(d, dict) else {}
+                _s = load_settings()
+                if "enabled" in _fd:
+                    _s["auto_update_panel"] = bool(_fd.get("enabled"))
+                    save_settings(_s)
+                    log("自动更新管理台程序：%s" % ("开启" if _s["auto_update_panel"] else "关闭"))
+                return self._json({"ok": True, "enabled": bool(_s.get("auto_update_panel", True)),
+                                   "last": str(_s.get("auto_update_last") or "")})
+            if p == "/api/update-check":
+                return self._json(update_check_once())
             if p == "/api/backup":
                 b = backup_config()
                 return self._json({"ok": bool(b), "file": os.path.basename(b) if b else "",
@@ -2071,25 +2234,24 @@ th{color:#475467;font-weight:600;font-size:12.5px}
     <div><label>管理台端口（对外唯一）</label><input id=t_ad></div>
    </div>
    <div class=row><div><label>管理台密码（= 面板密钥）</label><input id=t_sc></div></div>
-   <div style="margin-top:12px">
-    <button class=btn onclick="ipDetect()">自动识别本机 IP</button>
-    <button class=btn onclick="tlSave()">保存</button>
-    <button class="btn gray" onclick="applyAll()">应用并重建容器</button>
-   </div>
+   <div style="margin-top:12px"><button class=btn onclick="tlSave()">保存</button>
+    <span class=hint style="margin-left:8px">保存密码</span></div>
    <div class=hint><b>单端口设计</b>：节点面板（<code>/ui/</code>）和管理台「共用一个端口」= 管理台端口，对外只需要放通这一个。
     <b>内核接口端口</b>（默认 9091）只绑 <code>127.0.0.1</code>，是管理台和内核之间的内部通道，不对外、也不用在路由器上放通。</div>
-   <div class=hint>改了端口/地址要点「应用并重建容器」；若管理台容器里没有 docker 命令，页面会给出需要在 SSH 里执行的那条命令。</div></div>
+   <div class=hint>改密码 / 端口后点上面「保存」✓；只有当端口本身变了、需要重建容器时，才在 NAS 上用 SSH 执行 <code>docker compose up -d</code>（本页不再提供「应用并重建容器」）。</div></div>
 
   <div class=card><h2>⏰ 定时自动更新</h2>
    <label class=chk><input type=checkbox id=t_sch> 启用</label>
    <div class=row><div><label>每天更新时间（HH:MM）</label><input id=t_st placeholder=04:00></div></div>
+   <label class=chk style="margin-top:10px"><input type=checkbox id=t_au onchange="auToggle()">
+    自动检查更新</label>
    <div style="margin-top:12px"><button class=btn onclick="tlSave()">保存</button></div></div>
 
   <div class=card><h2>🧰 维护工具</h2>
    <div class=row>
     <div><button class=btn onclick="gen()">立即更新配置</button><div class=hint>重新生成 + 校验 + 热重载</div></div>
-    <div><button class=btn onclick="apiPost('/api/panel-ui',{},1)">一键安装面板界面</button><div class=hint>metacubexd</div></div>
-    <div><button class=btn onclick="apiPost('/api/sync',{},1)">同步程序文件</button><div class=hint>从仓库拉最新脚本</div></div>
+    <div><button class=btn onclick="chkUpd()">检查更新</button><div class=hint>看仓库有没有新版 <span id=upTip></span></div></div>
+    <div><button class=btn onclick="selfUpd()">更新管理台程序</button><div class=hint>拉取最新 + 校验 + 自动重启</div></div>
     <div><button class=btn onclick="apiPost('/api/backup',{},1)">立即备份配置</button><div class=hint>保留最近 10 份</div></div>
     <div><button class="btn red" onclick="kdRestart()">重启内核容器</button><div class=hint>热重载不生效时用</div></div>
    </div></div>
@@ -2351,6 +2513,37 @@ function loadBackups(){
   });
 }
 function rsGo(n){ if(!confirm('回滚到 '+n+' ？')) return; apiPost('/api/restore',{name:n},0); }
+function selfUpd(){
+  if(!confirm('从仓库拉取最新管理台程序（admin/app.py）？会先做语法校验 + 备份当前版本，成功后自动重启面板（约 8 秒）。')){
+    apiPost('/api/self-update',{apply:false},1); return;
+  }
+  apiPost('/api/self-update',{apply:true},1).then(function(d){
+    if(d && d.ok && !/已经是最新/.test(d.msg||'')){ setTimeout(function(){location.reload()},9000); }
+  });
+}
+function auToggle(){
+  apiPost('/api/auto-update',{enabled:$('#t_au').checked},0);
+}
+fetch('/api/settings').then(r=>r.json()).then(function(d){
+  var s=d.settings||{}, c=document.getElementById('t_au'), tip=document.getElementById('upTip');
+  if(c){ c.checked=(s.auto_update_panel!==false); }
+  if(tip && s.update_available){
+    tip.innerHTML='<b style="color:#d92d20">🔔 发现新版（'+String(s.update_available).slice(0,8)+'）—— 点左边按钮更新</b>';
+  }
+});
+function chkUpd(){
+  apiPost('/api/update-check',{},1).then(function(d){
+    var tip=document.getElementById('upTip');
+    if(!tip||!d){return}
+    if(d.available){
+      tip.innerHTML='<b style="color:#d92d20">🔔 发现新版（'+String(d.sha||'').slice(0,8)+'）—— 点「更新管理台程序」安装</b>';
+    }else if(d.ok){
+      tip.innerHTML='<b style="color:#12b76a">✓ 已是最新</b>';
+    }else{
+      tip.innerHTML='<b style="color:#d92d20">检查失败：'+esc(d.error||'')+'</b>';
+    }
+  });
+}
 function loadLogs(){ fetch('/api/logs?n=200').then(r=>r.json()).then(function(d){$('#logs').textContent=d.log||''}); }
 loadStatus();
 </script>
@@ -2392,6 +2585,7 @@ def main():
     s = bootstrap()
     threading.Thread(target=scheduler_loop, daemon=True).start()
     threading.Thread(target=panel_bootstrap, daemon=True).start()
+    threading.Thread(target=auto_update_loop, daemon=True).start()
     log("=== 管理台启动 ===")
     log("BASE=%s  bind=%s:%s  pass_len=%d  docker=%s"
         % (BASE, ADMIN_BIND, ADMIN_PORT, len(ADMIN_PASS), DOCKER))
