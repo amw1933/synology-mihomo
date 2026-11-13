@@ -38,7 +38,7 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
-APP_VERSION = "2.9.9"
+APP_VERSION = "2.9.10"
 
 BASE = os.environ.get("SB_BASE", "/data")
 ETC = os.path.join(BASE, "etc")
@@ -1282,6 +1282,14 @@ def _compose_file():
     return ""
 
 
+def _self_file_mounted():
+    """/app/app.py 是否从宿主机挂载进来的 —— 是的话覆盖式更新也持久（重建容器不丢）"""
+    try:
+        return os.path.samefile(os.path.abspath(__file__), os.path.join(BASE, "app.py"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def image_update():
     """拉最新镜像并重建管理台容器 —— 持久生效，容器重建后不会被镜像版本打回。
 
@@ -1291,6 +1299,10 @@ def image_update():
     comp = _compose_file()
     if not comp:
         return {"ok": False, "error": "工程目录里没有 compose 文件，无法走镜像更新"}
+    # 容器内的 docker CLI 未必带 compose 插件，先探一下，免得打印一堆 docker 帮助
+    rc0, o0, e0 = run_cmd([DOCKER, "compose", "version"], timeout=30)
+    if rc0 != 0:
+        return {"ok": False, "error": "当前环境没有 docker compose 插件"}
     log("镜像更新：开始拉取 %s（%s）" % (APP_NAME, os.path.basename(comp)))
     rc, out, err = run_cmd([DOCKER, "compose", "-f", comp, "pull", APP_NAME], timeout=900)
     tail = ((out or "")[-400:] + " " + (err or "")[-400:]).strip()
@@ -1415,9 +1427,12 @@ def self_update(apply=True):
     except Exception:  # noqa: BLE001
         pass
     threading.Thread(target=_self_restart, daemon=True).start()
+    _mounted = _self_file_mounted()
     return {"ok": True,
             "msg": "已更新到最新版（%d 字节）%s，正在重启管理台，约 8 秒后自动刷新页面" % (len(data), note),
-            "detail": {"backup": os.path.basename(bp)}}
+            "hint": ("管理台代码已挂载到宿主机文件，重建容器也不会丢" if _mounted
+                     else "注意：当前是覆盖容器内文件，容器重建后会回到镜像版本；建议在 compose 里加 - ./app.py:/app/app.py"),
+            "detail": {"backup": os.path.basename(bp), "persistent": _mounted}}
 
 
 def repo_latest_sha():
@@ -3486,7 +3501,7 @@ html.dark [style*="background:#98a2b3"]{background:#3a4a66!important}
   <div class=hmid>
    <span class=mk><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.2v5.9c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6.2z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.6"/></svg></span>
    <h1>mihomo 网页管理台<small>群晖 NAS · 单端口旁路由</small></h1>
-   <span class="pill" id=ver>v2.9.9</span>
+   <span class="pill" id=ver>v2.9.10</span>
    <span class="pill gray2" id=hd>群晖 NAS</span>
    <button id=mhuiBtn class=nodes onclick="(function(){var d=document.getElementById('mhui');var f=document.getElementById('mhuiF');if(d.style.display==='block'){d.style.display='none';}else{d.style.display='block';if(!f.getAttribute('src'))f.setAttribute('src','/ui/');}})()">节点面板（内嵌）</button>
   </div>
